@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-AI2BIZ Telegram Bot - Main Entry Point
+AI2BIZ Telegram Bot - WEBHOOK VERSION
 Работает на Render.com + Supabase
 Загружает файлы из Supabase Storage
+ТОЛЬКО WEBHOOK (БЕЗ POLLING)
 """
 
 import os
 import telebot
 from datetime import datetime
 from flask import Flask, request
-import json
 from dotenv import load_dotenv
 
 # Загружаем переменные окружения
@@ -25,14 +25,14 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 FILE_5_MISTAKES = "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/5%20mistakes%20of%20managers.pdf"
 FILE_CHECKLIST = "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Check%20list%2010%20ways.pdf"
 
-# Инициализируем Flask и Bot
-bot = telebot.TeleBot(TOKEN)
+# Инициализируем Flask и Bot (ВАЖНО: threaded=False для webhook)
+bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 # Временное хранилище для мультишаговых форм
 user_data = {}
 
-# ===== СУPABASE ФУНКЦИИ =====
+# ===== SUPABASE ФУНКЦИИ =====
 def save_to_supabase(table, data):
     """Сохраняет данные в Supabase"""
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -52,7 +52,7 @@ def save_to_supabase(table, data):
         response = requests.post(url, json=data, headers=headers)
         
         if response.status_code in [200, 201]:
-            print(f"✅ Сохранено в {table}: {data}")
+            print(f"✅ Сохранено в {table}")
             return True
         else:
             print(f"❌ Ошибка Supabase ({response.status_code}): {response.text}")
@@ -109,9 +109,9 @@ def webhook():
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
-    user_name = message.from_user.first_name or "Guest"
+    user_name = message.from_user.first_name or "Гость"
     
-    log_action(user_id, user_name, "START_COMMAND", "User started bot")
+    log_action(user_id, user_name, "START_COMMAND", "Пользователь запустил бота")
     
     welcome_text = f"""👋 Привет, {user_name}!
 
@@ -134,14 +134,14 @@ def send_welcome(message):
 @bot.message_handler(func=lambda m: True)
 def handle_message(message):
     user_id = message.from_user.id
-    user_name = message.from_user.first_name or "Guest"
+    user_name = message.from_user.first_name or "Гость"
     text = message.text.lower().strip()
     
-    # ОШИБКИ / MISTAKES
+    # ОШИБКИ
     if any(word in text for word in ["ошибок", "ошиб", "5 ошибок"]):
         bot.send_message(
             message.chat.id,
-            "📄 Отправляю: *5 ошибок менеджеров, из-за которых теряется 50% лидов*\n\nПожалуйста подождите...",
+            "📄 Отправляю файл: *5 ошибок менеджеров, из-за которых теряется 50% лидов*\n\nПожалуйста, подождите...",
             parse_mode="Markdown"
         )
         
@@ -154,14 +154,14 @@ def handle_message(message):
             )
             log_action(user_id, user_name, "DOWNLOAD_FILE", "5 mistakes of managers.pdf")
         except Exception as e:
-            print(f"❌ Error sending file: {e}")
-            bot.send_message(message.chat.id, f"❌ Error sending file: {str(e)}")
+            print(f"❌ Ошибка отправки файла: {e}")
+            bot.send_message(message.chat.id, f"❌ Ошибка при отправке файла: {str(e)}")
     
-    # ЧЕКЛИСТ / CHECKLIST
-    elif any(word in text for word in ["checklist", "чеклист", "чек", "способ", "10", "check list"]):
+    # ЧЕКЛИСТ
+    elif any(word in text for word in ["чеклист", "чек", "способ", "10"]):
         bot.send_message(
             message.chat.id,
-            "📄 Отправка: *Чек-лист: 10 способов обнаружить, теряете ли вы лидов*\n\nПожалуйста подождите...",
+            "📄 Отправляю файл: *Чек-лист: 10 способов обнаружить, теряете ли вы лидов*\n\nПожалуйста, подождите...",
             parse_mode="Markdown"
         )
         
@@ -174,11 +174,11 @@ def handle_message(message):
             )
             log_action(user_id, user_name, "DOWNLOAD_FILE", "Check list 10 ways.pdf")
         except Exception as e:
-            print(f"❌ Error sending file: {e}")
-            bot.send_message(message.chat.id, f"❌ Error sending file: {str(e)}")
+            print(f"❌ Ошибка отправки файла: {e}")
+            bot.send_message(message.chat.id, f"❌ Ошибка при отправке файла: {str(e)}")
     
-    # КОНСУЛЬТАЦИЯ / CONSULTATION
-    elif any(word in text for word in ["консультац", "запись", "созвон", "консульт", "consultation", "consult", "call"]):
+    # КОНСУЛЬТАЦИЯ
+    elif any(word in text for word in ["консультац", "запись", "созвон", "консульт"]):
         user_data[user_id] = {"user_name": user_name}
         msg = bot.send_message(
             message.chat.id,
@@ -190,10 +190,10 @@ def handle_message(message):
     else:
         bot.send_message(
             message.chat.id,
-            "❓ Я не понял команду.\n\n*Use:*\n"
-            "• mistakes\n"
-            "• checklist\n"
-            "• consultation",
+            "❓ Я не понял команду.\n\n*Используй:*\n"
+            "• ошибки\n"
+            "• чеклист\n"
+            "• консультация",
             parse_mode="Markdown"
         )
 
@@ -206,7 +206,7 @@ def ask_age(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Сколько вам лет?*",
+        "*Сколько вам лет?*\n\n17-20 / 21-30 / 31-40 / 41-50",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_telegram, user_id)
@@ -216,7 +216,7 @@ def ask_telegram(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Твой телеграм?* (@username)",
+        "*Твой Telegram?* (@username или ссылка)",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_email, user_id)
@@ -226,7 +226,7 @@ def ask_email(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Email?*",
+        "*Email адрес?*",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_business, user_id)
@@ -236,7 +236,7 @@ def ask_business(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Расскажи мне о своем бизнесе:*\n\nНиша, продукт, проблемы",
+        "*Расскажи о своём бизнесе:*\n\nНиша, выручка, продукт, проблемы",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_socials, user_id)
@@ -246,7 +246,7 @@ def ask_socials(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Прикрепите социальные сети или веб-сайт компании*",
+        "*Социальные сети или сайт компании?*",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_revenue, user_id)
@@ -256,7 +256,7 @@ def ask_revenue(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Ежемесячный доход?*\n\n< 300K / 300K-1M / 1M-5M / 5M+",
+        "*Выручка в месяц?*\n\n< 300K / 300K-1M / 1M-5M / 5M+",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_participants, user_id)
@@ -266,7 +266,7 @@ def ask_participants(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Кто будет присутствовать на звонке?*\n\nЯ один / С бизнес партнером / Я не принимаю решений с компании",
+        "*Кто будет на созвоне?*\n\nЯ один / С партнером / Не принимаю решений",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, finish_form, user_id)
@@ -277,22 +277,22 @@ def finish_form(message, user_id):
     
     # Сохраняем заявку
     save_application(user_id, app)
-    log_action(user_id, app.get('name'), "FORM_SUBMITTED", "Consultation request")
+    log_action(user_id, app.get('name'), "FORM_SUBMITTED", "Заявка на консультацию")
     
     confirmation = f"""✅ *Спасибо!* Заявка принята.
 
-📋 *Your data:*
+📋 *Твои данные:*
 👤 {app.get('name', 'N/A')}
-📅 {app.get('age', 'N/A')} years
+📅 {app.get('age', 'N/A')} лет
 📱 {app.get('telegram', 'N/A')}
 📧 {app.get('email', 'N/A')}
 
-🔗 *Zoom link:*
+🔗 *Ссылка на Zoom встречу:*
 {ZOOM_LINK}
 
-⏰ Менеджер свяжется с вами в течение 30 минут!
+⏰ Менеджер свяжется с тобой через 30 минут!
 
-Вопросы? → @glore4"""
+Вопросы? → @it_ai2biz_bot"""
     
     bot.send_message(message.chat.id, confirmation, parse_mode="Markdown")
 
@@ -351,25 +351,25 @@ def index():
     <body>
         <div class="container">
             <h1>🤖 AI2BIZ Telegram Bot</h1>
-            <div class="status">✅ ONLINE</div>
+            <div class="status">✅ ОНЛАЙН</div>
             
-            <p><strong>Bot:</strong> @it_ai2biz_bot</p>
-            <p><strong>Platform:</strong> Render + Supabase</p>
-            <p><strong>Connection:</strong> Webhook</p>
-            <p><strong>Status:</strong> <strong style="color: #20B8AA;">Live 24/7</strong></p>
+            <p><strong>Бот:</strong> @it_ai2biz_bot</p>
+            <p><strong>Платформа:</strong> Render + Supabase</p>
+            <p><strong>Тип подключения:</strong> Webhook</p>
+            <p><strong>Статус:</strong> <strong style="color: #20B8AA;">Работает 24/7</strong></p>
             
-            <h3>📊 Features:</h3>
+            <h3>📊 Функции:</h3>
             <ul>
-                <li>📄 PDF file distribution</li>
-                <li>📝 Consultation sign-up form</li>
-                <li>💾 Lead database saving</li>
-                <li>📊 Action logging</li>
-                <li>🔗 Zoom link sending</li>
+                <li>📄 Раздача PDF файлов</li>
+                <li>📝 Запись на консультацию</li>
+                <li>💾 Сохранение заявок в БД</li>
+                <li>📊 Логирование действий</li>
+                <li>🔗 Отправка Zoom ссылки</li>
             </ul>
             
             <div class="info">
-                <strong>✅ All set!</strong><br>
-                Bot is fully functional and ready to collect leads.
+                <strong>✅ Всё готово!</strong><br>
+                Бот полностью функционален и готов к использованию.
             </div>
         </div>
     </body>
@@ -379,9 +379,8 @@ def index():
 # ===== ЗАПУСК ПРИЛОЖЕНИЯ =====
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
-    print(f"🚀 Starting bot on port {port}...")
+    print(f"🚀 Запуск бота на порте {port}...")
     print(f"🤖 TOKEN: {TOKEN[:20]}...")
-    print(f"📍 Webhook: /telegram-webhook")
-    print(f"📄 File 1: {FILE_5_MISTAKES[:50]}...")
-    print(f"📄 File 2: {FILE_CHECKLIST[:50]}...")
+    print(f"📍 Webhook endpoint: /telegram-webhook")
+    print(f"⚠️ ТОЛЬКО WEBHOOK - polling ОТКЛЮЧЕН")
     app.run(host="0.0.0.0", port=port, debug=False)
