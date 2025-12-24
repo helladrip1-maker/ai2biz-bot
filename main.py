@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-AI2BIZ Telegram Bot - ADVANCED VERSION
+AI2BIZ Telegram Bot - ADVANCED VERSION V2
 - Две отдельных анкеты (файлы + консультация)
-- Кнопки-варианты ответов для выручки, времени функциониания и созвона
-- Отдельные потоки для каждого типа заявки
+- ДВА ТИПА ФАЙЛОВ: 5 ошибок менеджеров или Чек-лист (выбор пользователя)
+- Обязательная подписка на канал it_ai2biz перед анкетой
+- Кнопки-варианты ответов для выручки и времени функционирования
 - Уведомления администратору только на консультацию
 """
 
@@ -21,6 +22,7 @@ ZOOM_LINK = os.getenv("ZOOM_LINK", "https://zoom.us/YOUR_ZOOM_LINK")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
+CHANNEL_ID = "@it_ai2biz"  # ← КАНАЛ ДЛЯ ПОДПИСКИ
 
 FILE_5_MISTAKES = "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/5%20mistakes%20of%20managers.pdf"
 FILE_CHECKLIST = "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Check%20list%2010%20ways.pdf"
@@ -67,6 +69,30 @@ def log_action(user_id, name, action, details=""):
         "details": details
     })
 
+def save_lead_files(user_id, lead_data):
+    """Сохраняет лид файлов в таблицу leads_files"""
+    revenue = lead_data.get('revenue', '').lower()
+    if 'small' in revenue or '300k' in revenue or '<' in revenue:
+        segment = "small"
+    elif 'medium' in revenue or '300k' in revenue or '1m' in revenue:
+        segment = "medium"
+    elif 'large' in revenue or '5m' in revenue:
+        segment = "large"
+    else:
+        segment = "enterprise"
+    
+    data = {
+        "user_id": user_id,
+        "name": lead_data.get('name', ''),
+        "business_duration": lead_data.get('business_duration', ''),
+        "telegram": lead_data.get('telegram', ''),
+        "business": lead_data.get('business', ''),
+        "revenue": lead_data.get('revenue', ''),
+        "file_type": lead_data.get('file_type', ''),  # ← НОВОЕ: какой файл выбрал
+        "segment": segment
+    }
+    save_to_supabase("leads_files", data)
+
 def save_lead_consultation(user_id, lead_data):
     """Сохраняет лид консультации в таблицу leads_consultation"""
     revenue = lead_data.get('revenue', '').lower()
@@ -96,29 +122,6 @@ def save_lead_consultation(user_id, lead_data):
         "user_id": user_id,
         "segment": segment
     })
-
-def save_lead_files(user_id, lead_data):
-    """Сохраняет лид файлов в таблицу leads_files"""
-    revenue = lead_data.get('revenue', '').lower()
-    if 'small' in revenue or '300k' in revenue or '<' in revenue:
-        segment = "small"
-    elif 'medium' in revenue or '300k' in revenue or '1m' in revenue:
-        segment = "medium"
-    elif 'large' in revenue or '5m' in revenue:
-        segment = "large"
-    else:
-        segment = "enterprise"
-    
-    data = {
-        "user_id": user_id,
-        "name": lead_data.get('name', ''),
-        "business_duration": lead_data.get('business_duration', ''),
-        "telegram": lead_data.get('telegram', ''),
-        "business": lead_data.get('business', ''),
-        "revenue": lead_data.get('revenue', ''),
-        "segment": segment
-    }
-    save_to_supabase("leads_files", data)
 
 def notify_admin_consultation(lead_data):
     """Отправляет уведомление администратору только для консультаций"""
@@ -159,6 +162,25 @@ def determine_segment(revenue):
     else:
         return "enterprise"
 
+# ===== ПРОВЕРКА ПОДПИСКИ =====
+def check_user_subscription(user_id):
+    """
+    Проверяет подписку пользователя на канал.
+    ВАЖНО: Это требует специальных прав бота!
+    Если бот не админ в канале - функция вернёт False
+    """
+    try:
+        member_status = bot.get_chat_member(CHANNEL_ID, user_id)
+        # Статусы подписки: 'creator', 'administrator', 'member', 'restricted', 'left', 'kicked'
+        if member_status.status in ['creator', 'administrator', 'member']:
+            return True
+        else:
+            return False
+    except Exception as e:
+        print(f"⚠️ Ошибка проверки подписки: {e}")
+        # Если ошибка - возвращаем False для безопасности
+        return False
+
 # ===== WEBHOOK =====
 @app.route('/telegram-webhook', methods=['POST'])
 def webhook():
@@ -187,7 +209,7 @@ def send_welcome(message):
 *Что я могу:*
 
 1️⃣ Отправить PDF файлы → напиши: *файлы*
-   (Нужно заполнить краткую анкету)
+   (Выбери один из двух: "5 ошибок менеджеров" или "Чек-лист")
 
 2️⃣ Записать на консультацию → напиши: *консультация*
    (Подробная заявка + бронирование времени)
@@ -208,16 +230,23 @@ def handle_message(message):
     user_name = message.from_user.first_name or "Гость"
     text = message.text.lower().strip()
     
-    # ФАЙЛЫ - СВОЯ АНКЕТА
+    # ФАЙЛЫ - ПРОВЕРКА ПОДПИСКИ
     if any(word in text for word in ["файл", "files", "ошибок", "чеклист"]):
         user_state[user_id] = "files"
         user_data[user_id] = {}
+        
+        # Отправляем сообщение с кнопками для подписки
         msg = bot.send_message(
             message.chat.id,
-            "📝 Отлично! Для получения файлов заполни краткую анкету.\n\n*Как тебя зовут?*",
-            parse_mode="Markdown"
+            """📱 *Важно!* Для получения материалов нужно подписаться на наш канал.
+
+📢 Там мы делимся эксклюзивными материалами и инсайтами по автоматизации.
+
+Подпишись и нажми "Я подписался" 👇""",
+            parse_mode="Markdown",
+            reply_markup=get_subscription_buttons()
         )
-        bot.register_next_step_handler(msg, ask_files_business_duration, user_id)
+        bot.register_next_step_handler(msg, handle_subscription_check, user_id)
     
     # КОНСУЛЬТАЦИЯ - СВОЯ АНКЕТА
     elif any(word in text for word in ["консультац", "запись", "созвон", "консульт"]):
@@ -239,8 +268,6 @@ def handle_message(message):
         broadcast_by_segment(user_id, "large", message.text.replace("/broadcast_large ", ""))
     elif text.startswith('/broadcast_enterprise') and user_id == ADMIN_CHAT_ID:
         broadcast_by_segment(user_id, "enterprise", message.text.replace("/broadcast_enterprise ", ""))
-    elif text == '/broadcast_all' and user_id == ADMIN_CHAT_ID:
-        broadcast_to_all(user_id)
     else:
         bot.send_message(
             message.chat.id,
@@ -248,7 +275,109 @@ def handle_message(message):
             parse_mode="Markdown"
         )
 
-# ===== АНКЕТА ФАЙЛОВ (укороченная) =====
+# ===== КНОПКИ ПОДПИСКИ =====
+def get_subscription_buttons():
+    """Возвращает кнопки для проверки подписки"""
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.add("✅ Я подписался")
+    markup.add("🔗 Подписаться на канал")
+    return markup
+
+# ===== ПРОВЕРКА ПОДПИСКИ =====
+def handle_subscription_check(message, user_id):
+    """Проверяет подписку пользователя"""
+    text = message.text.lower().strip()
+    
+    # Если нажал "Подписаться на канал" - даем ссылку
+    if "подписаться" in text and "подписался" not in text:
+        msg = bot.send_message(
+            message.chat.id,
+            f"""🔗 *Подпишись на канал:*
+
+https://t.me/it_ai2biz
+
+После подписки нажми кнопку "Я подписался" 👇""",
+            parse_mode="Markdown",
+            reply_markup=get_subscription_buttons()
+        )
+        bot.register_next_step_handler(msg, handle_subscription_check, user_id)
+        return
+    
+    # Если нажал "Я подписался" - проверяем
+    if "подписался" in text:
+        if check_user_subscription(user_id):
+            # Пользователь подписан - переходим к выбору файла
+            bot.send_message(
+                message.chat.id,
+                "✅ *Отлично! Подписка подтверждена!*\n\n📚 Какой материал тебе нужен?",
+                parse_mode="Markdown",
+                reply_markup=get_file_selection_buttons(),
+                reply_markup=telebot.types.ReplyKeyboardRemove()
+            )
+            
+            # Отправляем кнопки с выбором файлов
+            markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            markup.add("📄 5 ошибок менеджеров")
+            markup.add("✅ Чек-лист")
+            
+            msg = bot.send_message(
+                message.chat.id,
+                "📚 *Выбери материал:*",
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+            bot.register_next_step_handler(msg, handle_file_selection, user_id)
+        else:
+            # Не подписан - просим еще раз
+            msg = bot.send_message(
+                message.chat.id,
+                """❌ *Похоже, ты еще не подписан на канал.*
+
+Подпишись на канал https://t.me/it_ai2biz и попробуй еще раз 👇""",
+                parse_mode="Markdown",
+                reply_markup=get_subscription_buttons()
+            )
+            bot.register_next_step_handler(msg, handle_subscription_check, user_id)
+
+# ===== ВЫБОР ФАЙЛА =====
+def get_file_selection_buttons():
+    """Возвращает кнопки для выбора файла"""
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.add("📄 5 ошибок менеджеров")
+    markup.add("✅ Чек-лист")
+    return markup
+
+def handle_file_selection(message, user_id):
+    """Обрабатывает выбор файла"""
+    text = message.text.lower().strip()
+    
+    if "ошибок" in text or "менеджеров" in text:
+        user_data[user_id]["file_type"] = "5_mistakes"
+        log_action(user_id, "", "FILE_SELECTED", "Выбрал: 5 ошибок менеджеров")
+    elif "чек" in text or "лист" in text:
+        user_data[user_id]["file_type"] = "checklist"
+        log_action(user_id, "", "FILE_SELECTED", "Выбрал: Чек-лист")
+    else:
+        # Неправильный выбор
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ Пожалуйста, выбери один из предложенных вариантов",
+            parse_mode="Markdown",
+            reply_markup=get_file_selection_buttons()
+        )
+        bot.register_next_step_handler(msg, handle_file_selection, user_id)
+        return
+    
+    # Переходим к анкете
+    msg = bot.send_message(
+        message.chat.id,
+        "📝 Отлично! Теперь заполни краткую анкету.\n\n*Как тебя зовут?*",
+        parse_mode="Markdown",
+        reply_markup=telebot.types.ReplyKeyboardRemove()
+    )
+    bot.register_next_step_handler(msg, ask_files_business_duration, user_id)
+
+# ===== АНКЕТА ФАЙЛОВ =====
 def ask_files_business_duration(message, user_id):
     user_data[user_id]["name"] = message.text
     
@@ -304,32 +433,33 @@ def finish_form_files(message, user_id):
     
     # Сохраняем лид файлов
     save_lead_files(user_id, app)
-    log_action(user_id, app.get('name'), "FORM_SUBMITTED_FILES", "Заявка на файлы")
+    log_action(user_id, app.get('name'), "FORM_SUBMITTED_FILES", f"Заявка на файлы: {app.get('file_type')}")
     
-    # Отправляем файлы
+    # Отправляем выбранный файл
     bot.send_message(
         message.chat.id,
-        "📄 Отправляю файлы: *5 ошибок менеджеров* и *Чек-лист*\n\nПожалуйста, подождите...",
+        "📄 Отправляю твой файл...",
         parse_mode="Markdown",
         reply_markup=telebot.types.ReplyKeyboardRemove()
     )
     
     try:
-        bot.send_document(
-            message.chat.id,
-            FILE_5_MISTAKES,
-            caption="📄 *5 ошибок менеджеров, из-за которых теряются 50% лидов*\n\n✅ Этот материал поможет увеличить конверсию на 150-300%",
-            parse_mode="Markdown"
-        )
+        # Определяем какой файл отправить
+        if app.get('file_type') == "5_mistakes":
+            file_url = FILE_5_MISTAKES
+            caption = "📄 *5 ошибок менеджеров, из-за которых теряются 50% лидов*\n\n✅ Этот материал поможет увеличить конверсию на 150-300%"
+        else:
+            file_url = FILE_CHECKLIST
+            caption = "📄 *Чек-лист: 10 способов обнаружить, теряете ли вы лидов*\n\n✅ Проверьте свою воронку продаж прямо сейчас"
         
         bot.send_document(
             message.chat.id,
-            FILE_CHECKLIST,
-            caption="📄 *Чек-лист: 10 способов обнаружить, теряете ли вы лидов*\n\n✅ Проверьте свою воронку продаж прямо сейчас",
+            file_url,
+            caption=caption,
             parse_mode="Markdown"
         )
         
-        log_action(user_id, app.get('name'), "DOWNLOAD_FILES", "Получил файлы")
+        log_action(user_id, app.get('name'), "DOWNLOAD_FILES", f"Получил файл: {app.get('file_type')}")
         
         # Призыв к действию
         call_to_action = """
@@ -355,7 +485,7 @@ def finish_form_files(message, user_id):
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)}")
 
-# ===== АНКЕТА КОНСУЛЬТАЦИИ (полная) =====
+# ===== АНКЕТА КОНСУЛЬТАЦИИ =====
 def ask_consultation_business_duration(message, user_id):
     user_data[user_id]["name"] = message.text
     
@@ -509,34 +639,28 @@ def broadcast_by_segment(admin_id, segment, message_text):
     except Exception as e:
         bot.send_message(admin_id, f"❌ Ошибка: {str(e)}")
 
-def broadcast_to_all(admin_id):
-    """Рассылка всем"""
-    bot.send_message(admin_id, "📤 Укажите текст:\n\n/broadcast_all_text Ваш текст")
-
 # ===== ГЛАВНАЯ СТРАНИЦА =====
 @app.route('/')
 def index():
     return """
     <h1>✅ AI2BIZ Telegram Bot работает!</h1>
-    <p><strong>Версия:</strong> Advanced (два отдельных потока, две анкеты, кнопки-варианты)</p>
+    <p><strong>Версия:</strong> Advanced V2 (выбор файлов + проверка подписки)</p>
     <p><strong>Статус:</strong> Готов к использованию</p>
     <hr>
     <h2>📋 Функции:</h2>
     <ul>
-        <li>✅ Отдельная анкета для ФАЙЛОВ (4 вопроса)</li>
-        <li>✅ Отдельная анкета для КОНСУЛЬТАЦИИ (8 вопросов)</li>
+        <li>✅ Две отдельные анкеты (файлы и консультация)</li>
+        <li>✅ Выбор между двумя файлами: "5 ошибок менеджеров" или "Чек-лист"</li>
+        <li>✅ Обязательная подписка на канал @it_ai2biz перед получением файлов</li>
         <li>✅ Кнопки-варианты для выручки и времени функционирования</li>
-        <li>✅ Кнопки для выбора участников созвона и времени Zoom</li>
-        <li>✅ Уведомления админу ТОЛЬКО на консультацию</li>
-        <li>✅ Призыв к действию при отправке файлов</li>
-        <li>✅ Личная связь в Telegram вместо прямой ссылки на Zoom</li>
-        <li>✅ Сегментация и рассылки по сегментам</li>
+        <li>✅ Уведомления админу только на консультацию</li>
+        <li>✅ Отправка выбранного пользователем файла</li>
     </ul>
     """
 
 # ===== ЗАПУСК БОТА =====
 if __name__ == "__main__":
-    # Для локального тестирования используйте polling
     print("🤖 Бот AI2BIZ запущен!")
     print("💾 Таблицы в Supabase: leads_consultation, leads_files, segments, stats")
+    print(f"📱 Канал для подписки: {CHANNEL_ID}")
     bot.infinity_polling()
