@@ -113,20 +113,20 @@ def send_welcome(message):
     
     log_action(user_id, user_name, "START_COMMAND", "User started bot")
     
-    welcome_text = f"""👋 Hello, {user_name}!
+    welcome_text = f"""👋 Привет, {user_name}!
 
-🎯 I am AI2BIZ bot - helping you get materials on sales automation.
+🎯 Я бот AI2BIZ — помогу получить материалы по автоматизации продаж.
 
-*What I can do:*
-1️⃣ Send PDF files → write: *mistakes* or *checklist*
-2️⃣ Sign up for a consultation → write: *consultation*
+*Что я могу:*
+1️⃣ Отправить PDF файлы → напиши: *ошибки* или *чеклист*
+2️⃣ Записать на консультацию → напиши: *консультация*
 
-*These materials will help:*
-✅ Increase conversion by 150-300%
-✅ Automate manager work
-✅ Not lose 50% of leads
+*Материалы помогут:*
+✅ Увеличить конверсию на 150-300%
+✅ Автоматизировать работу менеджеров
+✅ Не потерять 50% лидов
 
-📚 Write a keyword and let's start!"""
+📚 Напиши ключевое слово и начнём!"""
     
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
 
@@ -138,10 +138,10 @@ def handle_message(message):
     text = message.text.lower().strip()
     
     # ОШИБКИ / MISTAKES
-    if any(word in text for word in ["mistake", "ошибок", "ошиб", "5 ошибок", "5 mistakes"]):
+    if any(word in text for word in ["ошибок", "ошиб", "5 ошибок"]):
         bot.send_message(
             message.chat.id,
-            "📄 Sending: *5 mistakes of managers who lose 50% of leads*\n\nPlease wait...",
+            "📄 Отправляю: *5 ошибок менеджеров, из-за которых теряется 50% лидов*\n\nПожалуйста подождите...",
             parse_mode="Markdown"
         )
         
@@ -149,7 +149,7 @@ def handle_message(message):
             bot.send_document(
                 message.chat.id,
                 FILE_5_MISTAKES,
-                caption="📄 *5 mistakes of managers who lose 50% of leads*\n\n✅ This material will help increase conversion by 150-300%",
+                caption="📄 *5 ошибок менеджеров, из-за которых теряются 50% лидов*\n\n✅ Этот материал поможет увеличить конверсию на 150-300%",
                 parse_mode="Markdown"
             )
             log_action(user_id, user_name, "DOWNLOAD_FILE", "5 mistakes of managers.pdf")
@@ -161,7 +161,7 @@ def handle_message(message):
     elif any(word in text for word in ["checklist", "чеклист", "чек", "способ", "10", "check list"]):
         bot.send_message(
             message.chat.id,
-            "📄 Sending: *Check list: 10 ways to detect lost leads*\n\nPlease wait...",
+            "📄 Отправка: *Чек-лист: 10 способов обнаружить, теряете ли вы лидов*\n\nПожалуйста подождите...",
             parse_mode="Markdown"
         )
         
@@ -169,7 +169,7 @@ def handle_message(message):
             bot.send_document(
                 message.chat.id,
                 FILE_CHECKLIST,
-                caption="📄 *Check list: 10 ways to detect lost leads*\n\n✅ Check your sales funnel right now",
+                caption="📄 *Чек-лист: 10 способов обнаружить, теряете ли вы лидов*\n\n✅ Проверьте свою воронку продаж прямо сейчас",
                 parse_mode="Markdown"
             )
             log_action(user_id, user_name, "DOWNLOAD_FILE", "Check list 10 ways.pdf")
@@ -182,7 +182,7 @@ def handle_message(message):
         user_data[user_id] = {"user_name": user_name}
         msg = bot.send_message(
             message.chat.id,
-            "🎯 Great! Let's sign up for a consultation.\n\n*What is your name?*",
+            "🎯 Отлично! Давайте запишемся на консультацию.\n\n*Как тебя зовут?*",
             parse_mode="Markdown"
         )
         bot.register_next_step_handler(msg, ask_age, user_id)
@@ -190,7 +190,7 @@ def handle_message(message):
     else:
         bot.send_message(
             message.chat.id,
-            "❓ I did not understand the command.\n\n*Use:*\n"
+            "❓ Я не понял команду.\n\n*Use:*\n"
             "• mistakes\n"
             "• checklist\n"
             "• consultation",
@@ -206,7 +206,7 @@ def ask_age(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*How old are you?*\n\n17-20 / 21-30 / 31-40 / 41-50",
+        "*Сколько вам лет?*",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_telegram, user_id)
@@ -216,7 +216,7 @@ def ask_telegram(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Your Telegram?* (@username or link)",
+        "*Твой телеграм?* (@username)",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_email, user_id)
@@ -226,7 +226,7 @@ def ask_email(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Email address?*",
+        "*Email?*",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_business, user_id)
@@ -236,7 +236,7 @@ def ask_business(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Tell me about your business:*\n\nNiche, revenue, product, problems",
+        "*Расскажи мне о своем бизнесе:*\n\nНиша, продукт, проблемы",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_socials, user_id)
@@ -246,7 +246,7 @@ def ask_socials(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Company social media or website?*",
+        "*Прикрепите социальные сети или веб-сайт компании*",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_revenue, user_id)
@@ -256,7 +256,7 @@ def ask_revenue(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Monthly revenue?*\n\n< 300K / 300K-1M / 1M-5M / 5M+",
+        "*Ежемесячный доход?*\n\n< 300K / 300K-1M / 1M-5M / 5M+",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, ask_participants, user_id)
@@ -266,7 +266,7 @@ def ask_participants(message, user_id):
     
     msg = bot.send_message(
         message.chat.id,
-        "*Who will be on the call?*\n\nMe alone / With partner / I don't make decisions",
+        "*Кто будет присутствовать на звонке?*\n\nЯ один / С бизнес партнером / Я не принимаю решений с компании",
         parse_mode="Markdown"
     )
     bot.register_next_step_handler(msg, finish_form, user_id)
@@ -279,7 +279,7 @@ def finish_form(message, user_id):
     save_application(user_id, app)
     log_action(user_id, app.get('name'), "FORM_SUBMITTED", "Consultation request")
     
-    confirmation = f"""✅ *Thank you!* Application accepted.
+    confirmation = f"""✅ *Спасибо!* Заявка принята.
 
 📋 *Your data:*
 👤 {app.get('name', 'N/A')}
@@ -290,9 +290,9 @@ def finish_form(message, user_id):
 🔗 *Zoom link:*
 {ZOOM_LINK}
 
-⏰ Manager will contact you within 30 minutes!
+⏰ Менеджер свяжется с вами в течение 30 минут!
 
-Questions? → @it_ai2biz_bot"""
+Вопросы? → @glore4"""
     
     bot.send_message(message.chat.id, confirmation, parse_mode="Markdown")
 
