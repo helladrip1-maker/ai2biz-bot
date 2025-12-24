@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-AI2BIZ Telegram Bot - ADVANCED VERSION V2 (ИСПРАВЛЕННАЯ)
+AI2BIZ Telegram Bot - ADVANCED VERSION V3 (ФИНАЛЬНАЯ)
 - Две отдельных анкеты (файлы + консультация)
 - ДВА ТИПА ФАЙЛОВ: 5 ошибок менеджеров или Чек-лист (выбор пользователя)
-- Обязательная подписка на канал it_ai2biz перед анкетой
+- Обязательная подписка на канал it_ai2biz перед анкетой с проверкой
 - Кнопки-варианты ответов для выручки и времени функционирования
 - Уведомления администратору только на консультацию
+- НОВОЕ: Команда /cancel для выхода из цикла
+- НОВОЕ: Проверка введенных данных (Email, Telegram, имя)
 """
 
 import os
+import re
 import telebot
 from datetime import datetime
 from flask import Flask, request
@@ -22,7 +25,7 @@ ZOOM_LINK = os.getenv("ZOOM_LINK", "https://zoom.us/YOUR_ZOOM_LINK")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
-CHANNEL_ID = "@it_ai2biz"  # ← КАНАЛ ДЛЯ ПОДПИСКИ
+CHANNEL_ID = "@it_ai2biz"
 
 FILE_5_MISTAKES = "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/5%20mistakes%20of%20managers.pdf"
 FILE_CHECKLIST = "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Check%20list%2010%20ways.pdf"
@@ -31,7 +34,29 @@ bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 user_data = {}
-user_state = {}  # "files" или "consultation"
+user_state = {}
+
+# ===== ВАЛИДАЦИЯ =====
+def is_valid_email(email):
+    """Проверяет валидность email"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+def is_valid_telegram(telegram):
+    """Проверяет валидность Telegram"""
+    telegram = telegram.strip()
+    # Может быть @username или ссылка https://t.me/username
+    if telegram.startswith('@'):
+        return len(telegram) > 1 and telegram.replace('@', '').replace('_', '').isalnum()
+    elif 't.me/' in telegram:
+        return True
+    else:
+        return False
+
+def is_valid_name(name):
+    """Проверяет валидность имени"""
+    name = name.strip()
+    return len(name) >= 2 and len(name) <= 50
 
 # ===== SUPABASE =====
 def save_to_supabase(table, data):
@@ -88,7 +113,7 @@ def save_lead_files(user_id, lead_data):
         "telegram": lead_data.get('telegram', ''),
         "business": lead_data.get('business', ''),
         "revenue": lead_data.get('revenue', ''),
-        "file_type": lead_data.get('file_type', ''),  # ← НОВОЕ: какой файл выбрал
+        "file_type": lead_data.get('file_type', ''),
         "segment": segment
     }
     save_to_supabase("leads_files", data)
@@ -164,21 +189,15 @@ def determine_segment(revenue):
 
 # ===== ПРОВЕРКА ПОДПИСКИ =====
 def check_user_subscription(user_id):
-    """
-    Проверяет подписку пользователя на канал.
-    ВАЖНО: Это требует специальных прав бота!
-    Если бот не админ в канале - функция вернёт False
-    """
+    """Проверяет подписку пользователя на канал"""
     try:
         member_status = bot.get_chat_member(CHANNEL_ID, user_id)
-        # Статусы подписки: 'creator', 'administrator', 'member', 'restricted', 'left', 'kicked'
         if member_status.status in ['creator', 'administrator', 'member']:
             return True
         else:
             return False
     except Exception as e:
         print(f"⚠️ Ошибка проверки подписки: {e}")
-        # Если ошибка - возвращаем False для безопасности
         return False
 
 # ===== WEBHOOK =====
@@ -219,9 +238,23 @@ def send_welcome(message):
 ✅ Автоматизировать работу менеджеров
 ✅ Не потерять 50% лидов
 
+💡 Напиши /cancel чтобы вернуться в главное меню
+
 📚 Выбери действие!"""
     
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown")
+
+# ===== /CANCEL =====
+@bot.message_handler(commands=['cancel'])
+def cancel_command(message):
+    """Отменяет текущий процесс и возвращает в главное меню"""
+    user_id = message.from_user.id
+    if user_id in user_data:
+        del user_data[user_id]
+    if user_id in user_state:
+        del user_state[user_id]
+    
+    send_welcome(message)
 
 # ===== ОСНОВНАЯ ОБРАБОТКА =====
 @bot.message_handler(func=lambda m: True)
@@ -235,29 +268,30 @@ def handle_message(message):
         user_state[user_id] = "files"
         user_data[user_id] = {}
         
-        # Отправляем сообщение с кнопками для подписки
         msg = bot.send_message(
             message.chat.id,
             """📱 *Важно!* Для получения материалов нужно подписаться на наш канал.
 
 📢 Там мы делимся эксклюзивными материалами и инсайтами по автоматизации.
 
-Подпишись и нажми "Я подписался" 👇""",
+Подпишись и нажми "Я подписался" 👇
+
+💡 Напиши /cancel если хочешь вернуться в главное меню""",
             parse_mode="Markdown",
             reply_markup=get_subscription_buttons()
         )
         bot.register_next_step_handler(msg, handle_subscription_check, user_id)
     
-    # КОНСУЛЬТАЦИЯ - СВОЯ АНКЕТА
+    # КОНСУЛЬТАЦИЯ
     elif any(word in text for word in ["консультац", "запись", "созвон", "консульт"]):
         user_state[user_id] = "consultation"
         user_data[user_id] = {}
         msg = bot.send_message(
             message.chat.id,
-            "🎯 Отлично! Давайте запишемся на консультацию.\n\n*Как тебя зовут?*",
+            "🎯 Отлично! Давайте запишемся на консультацию.\n\n*Как тебя зовут?*\n\n💡 Напиши /cancel если хочешь вернуться в главное меню",
             parse_mode="Markdown"
         )
-        bot.register_next_step_handler(msg, ask_consultation_business_duration, user_id)
+        bot.register_next_step_handler(msg, ask_consultation_name, user_id)
     
     # АДМИНИСТРАТОР: РАССЫЛКА
     elif text.startswith('/broadcast_small') and user_id == ADMIN_CHAT_ID:
@@ -271,7 +305,7 @@ def handle_message(message):
     else:
         bot.send_message(
             message.chat.id,
-            "❓ Команда не понята.\n\n*Используй:*\n• файлы\n• консультация",
+            "❓ Команда не понята.\n\n*Используй:*\n• файлы\n• консультация\n• /cancel (вернуться в меню)",
             parse_mode="Markdown"
         )
 
@@ -324,11 +358,22 @@ https://t.me/it_ai2biz
                 message.chat.id,
                 """❌ *Похоже, ты еще не подписан на канал.*
 
+📢 *Материалы доступны только подписчикам канала!*
+
 Подпишись на канал https://t.me/it_ai2biz и попробуй еще раз 👇""",
                 parse_mode="Markdown",
                 reply_markup=get_subscription_buttons()
             )
             bot.register_next_step_handler(msg, handle_subscription_check, user_id)
+    else:
+        # Неправильный выбор
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ Пожалуйста, выбери один из предложенных вариантов",
+            parse_mode="Markdown",
+            reply_markup=get_subscription_buttons()
+        )
+        bot.register_next_step_handler(msg, handle_subscription_check, user_id)
 
 # ===== ВЫБОР ФАЙЛА =====
 def handle_file_selection(message, user_id):
@@ -342,7 +387,6 @@ def handle_file_selection(message, user_id):
         user_data[user_id]["file_type"] = "checklist"
         log_action(user_id, "", "FILE_SELECTED", "Выбрал: Чек-лист")
     else:
-        # Неправильный выбор
         markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
         markup.add("📄 5 ошибок менеджеров")
         markup.add("✅ Чек-лист")
@@ -356,18 +400,29 @@ def handle_file_selection(message, user_id):
         bot.register_next_step_handler(msg, handle_file_selection, user_id)
         return
     
-    # Переходим к анкете
     msg = bot.send_message(
         message.chat.id,
-        "📝 Отлично! Теперь заполни краткую анкету.\n\n*Как тебя зовут?*",
+        "📝 Отлично! Теперь заполни краткую анкету.\n\n*Как тебя зовут?*\n\n(Минимум 2 буквы)",
         parse_mode="Markdown",
         reply_markup=telebot.types.ReplyKeyboardRemove()
     )
-    bot.register_next_step_handler(msg, ask_files_business_duration, user_id)
+    bot.register_next_step_handler(msg, ask_files_name_check, user_id)
 
 # ===== АНКЕТА ФАЙЛОВ =====
-def ask_files_business_duration(message, user_id):
-    user_data[user_id]["name"] = message.text
+def ask_files_name_check(message, user_id):
+    """Проверяет имя перед сохранением"""
+    name = message.text.strip()
+    
+    if not is_valid_name(name):
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ *Некорректное имя!*\n\nИмя должно быть от 2 до 50 символов. Попробуй ещё раз:",
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, ask_files_name_check, user_id)
+        return
+    
+    user_data[user_id]["name"] = name
     
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     markup.add("До 1 года", "1-3 года")
@@ -379,29 +434,41 @@ def ask_files_business_duration(message, user_id):
         parse_mode="Markdown",
         reply_markup=markup
     )
-    bot.register_next_step_handler(msg, ask_files_telegram, user_id)
+    bot.register_next_step_handler(msg, ask_files_business_duration, user_id)
 
-def ask_files_telegram(message, user_id):
+def ask_files_business_duration(message, user_id):
     user_data[user_id]["business_duration"] = message.text
     msg = bot.send_message(
         message.chat.id,
-        "*Твой Telegram?*\n\n(@username или ссылка)",
+        "*Твой Telegram?*\n\n(@username или ссылка, например @john_doe или https://t.me/john_doe)",
         parse_mode="Markdown",
         reply_markup=telebot.types.ReplyKeyboardRemove()
     )
-    bot.register_next_step_handler(msg, ask_files_business, user_id)
+    bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
 
-def ask_files_business(message, user_id):
-    user_data[user_id]["telegram"] = message.text
+def ask_files_telegram_check(message, user_id):
+    """Проверяет Telegram перед сохранением"""
+    telegram = message.text.strip()
+    
+    if not is_valid_telegram(telegram):
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ *Некорректный Telegram!*\n\nИспользуй формат:\n• @username\n• или https://t.me/username",
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
+        return
+    
+    user_data[user_id]["telegram"] = telegram
     msg = bot.send_message(
         message.chat.id,
         "*Расскажи о своём бизнесе:*\n\nНиша, продукт, основные проблемы",
         parse_mode="Markdown"
     )
-    bot.register_next_step_handler(msg, ask_files_revenue, user_id)
+    bot.register_next_step_handler(msg, ask_files_business, user_id)
 
-def ask_files_revenue(message, user_id):
-    user_data[user_id]["business"] = message.text
+def ask_files_business(message, user_id):
+    user_data[user_id]["business"] = message.text.strip()
     
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     markup.add("< 300K", "300K - 1M")
@@ -419,11 +486,9 @@ def finish_form_files(message, user_id):
     user_data[user_id]["revenue"] = message.text
     app = user_data[user_id]
     
-    # Сохраняем лид файлов
     save_lead_files(user_id, app)
     log_action(user_id, app.get('name'), "FORM_SUBMITTED_FILES", f"Заявка на файлы: {app.get('file_type')}")
     
-    # Отправляем выбранный файл
     bot.send_message(
         message.chat.id,
         "📄 Отправляю твой файл...",
@@ -432,7 +497,6 @@ def finish_form_files(message, user_id):
     )
     
     try:
-        # Определяем какой файл отправить
         if app.get('file_type') == "5_mistakes":
             file_url = FILE_5_MISTAKES
             caption = "📄 *5 ошибок менеджеров, из-за которых теряются 50% лидов*\n\n✅ Этот материал поможет увеличить конверсию на 150-300%"
@@ -449,7 +513,6 @@ def finish_form_files(message, user_id):
         
         log_action(user_id, app.get('name'), "DOWNLOAD_FILES", f"Получил файл: {app.get('file_type')}")
         
-        # Призыв к действию
         call_to_action = """
 🚀 *Готовы ускорить результаты?*
 
@@ -467,6 +530,8 @@ def finish_form_files(message, user_id):
 📅 Просто напишите: *консультация*
 
 Специалист AI2BIZ свяжется с вами в течение часа!
+
+💡 Или напишите /cancel чтобы вернуться в главное меню
 """
         bot.send_message(message.chat.id, call_to_action, parse_mode="Markdown")
         
@@ -474,8 +539,20 @@ def finish_form_files(message, user_id):
         bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)}")
 
 # ===== АНКЕТА КОНСУЛЬТАЦИИ =====
-def ask_consultation_business_duration(message, user_id):
-    user_data[user_id]["name"] = message.text
+def ask_consultation_name(message, user_id):
+    """Проверяет имя для консультации"""
+    name = message.text.strip()
+    
+    if not is_valid_name(name):
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ *Некорректное имя!*\n\nИмя должно быть от 2 до 50 символов. Попробуй ещё раз:",
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, ask_consultation_name, user_id)
+        return
+    
+    user_data[user_id]["name"] = name
     
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     markup.add("До 1 года", "1-3 года")
@@ -487,38 +564,62 @@ def ask_consultation_business_duration(message, user_id):
         parse_mode="Markdown",
         reply_markup=markup
     )
-    bot.register_next_step_handler(msg, ask_consultation_telegram, user_id)
+    bot.register_next_step_handler(msg, ask_consultation_business_duration, user_id)
 
-def ask_consultation_telegram(message, user_id):
+def ask_consultation_business_duration(message, user_id):
     user_data[user_id]["business_duration"] = message.text
     msg = bot.send_message(
         message.chat.id,
-        "*Твой Telegram?*\n\n(@username или ссылка)",
+        "*Твой Telegram?*\n\n(@username или ссылка, например @john_doe или https://t.me/john_doe)",
         parse_mode="Markdown",
         reply_markup=telebot.types.ReplyKeyboardRemove()
     )
-    bot.register_next_step_handler(msg, ask_consultation_email, user_id)
+    bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
 
-def ask_consultation_email(message, user_id):
-    user_data[user_id]["telegram"] = message.text
+def ask_consultation_telegram_check(message, user_id):
+    """Проверяет Telegram для консультации"""
+    telegram = message.text.strip()
+    
+    if not is_valid_telegram(telegram):
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ *Некорректный Telegram!*\n\nИспользуй формат:\n• @username\n• или https://t.me/username",
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
+        return
+    
+    user_data[user_id]["telegram"] = telegram
     msg = bot.send_message(
         message.chat.id,
-        "*Email адрес?*",
+        "*Email адрес?*\n\n(Например: name@example.com)",
         parse_mode="Markdown"
     )
-    bot.register_next_step_handler(msg, ask_consultation_business, user_id)
+    bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
 
-def ask_consultation_business(message, user_id):
-    user_data[user_id]["email"] = message.text
+def ask_consultation_email_check(message, user_id):
+    """Проверяет Email перед сохранением"""
+    email = message.text.strip()
+    
+    if not is_valid_email(email):
+        msg = bot.send_message(
+            message.chat.id,
+            "❌ *Некорректный Email!*\n\nИспользуй формат: name@example.com",
+            parse_mode="Markdown"
+        )
+        bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
+        return
+    
+    user_data[user_id]["email"] = email
     msg = bot.send_message(
         message.chat.id,
         "*Расскажи о своём бизнесе:*\n\nНиша, выручка, продукт, проблемы",
         parse_mode="Markdown"
     )
-    bot.register_next_step_handler(msg, ask_consultation_revenue, user_id)
+    bot.register_next_step_handler(msg, ask_consultation_business, user_id)
 
-def ask_consultation_revenue(message, user_id):
-    user_data[user_id]["business"] = message.text
+def ask_consultation_business(message, user_id):
+    user_data[user_id]["business"] = message.text.strip()
     
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
     markup.add("< 300K", "300K - 1M")
@@ -530,9 +631,9 @@ def ask_consultation_revenue(message, user_id):
         parse_mode="Markdown",
         reply_markup=markup
     )
-    bot.register_next_step_handler(msg, ask_consultation_participants, user_id)
+    bot.register_next_step_handler(msg, ask_consultation_revenue, user_id)
 
-def ask_consultation_participants(message, user_id):
+def ask_consultation_revenue(message, user_id):
     user_data[user_id]["revenue"] = message.text
     
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
@@ -545,9 +646,9 @@ def ask_consultation_participants(message, user_id):
         parse_mode="Markdown",
         reply_markup=markup
     )
-    bot.register_next_step_handler(msg, ask_consultation_zoom_time, user_id)
+    bot.register_next_step_handler(msg, ask_consultation_participants, user_id)
 
-def ask_consultation_zoom_time(message, user_id):
+def ask_consultation_participants(message, user_id):
     user_data[user_id]["participants"] = message.text
     
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
@@ -566,14 +667,11 @@ def finish_form_consultation(message, user_id):
     user_data[user_id]["zoom_time"] = message.text
     app = user_data[user_id]
     
-    # Сохраняем лид консультации
     save_lead_consultation(user_id, app)
     log_action(user_id, app.get('name'), "FORM_SUBMITTED_CONSULTATION", "Заявка на консультацию")
     
-    # Отправляем уведомление администратору ТОЛЬКО для консультации
     notify_admin_consultation(app)
     
-    # Финальное сообщение пользователю
     confirmation = f"""✅ *Спасибо!* Заявка принята.
 
 📋 *Твои данные:*
@@ -586,7 +684,9 @@ def finish_form_consultation(message, user_id):
 
 ⏰ Ты указал(а): {app.get('zoom_time')}
 
-Спасибо, что выбрал AI2BIZ! 🚀"""
+Спасибо, что выбрал AI2BIZ! 🚀
+
+💡 Напишите /cancel если хочешь вернуться в главное меню"""
     
     bot.send_message(
         message.chat.id,
@@ -632,23 +732,27 @@ def broadcast_by_segment(admin_id, segment, message_text):
 def index():
     return """
     <h1>✅ AI2BIZ Telegram Bot работает!</h1>
-    <p><strong>Версия:</strong> Advanced V2 (выбор файлов + проверка подписки) - ИСПРАВЛЕННАЯ</p>
+    <p><strong>Версия:</strong> Advanced V3 (ФИНАЛЬНАЯ)</p>
     <p><strong>Статус:</strong> Готов к использованию</p>
     <hr>
     <h2>📋 Функции:</h2>
     <ul>
         <li>✅ Две отдельные анкеты (файлы и консультация)</li>
-        <li>✅ Выбор между двумя файлами: "5 ошибок менеджеров" или "Чек-лист"</li>
-        <li>✅ Обязательная подписка на канал @it_ai2biz перед получением файлов</li>
-        <li>✅ Кнопки-варианты для выручки и времени функционирования</li>
+        <li>✅ Выбор между двумя файлами с проверкой подписки</li>
+        <li>✅ Обязательная подписка на @it_ai2biz</li>
+        <li>✅ Автоматическая проверка подписки</li>
+        <li>✅ Кнопки-варианты для выручки и времени</li>
+        <li>✅ Валидация данных (Email, Telegram, имя)</li>
+        <li>✅ Команда /cancel для выхода из процесса</li>
         <li>✅ Уведомления админу только на консультацию</li>
-        <li>✅ Отправка выбранного пользователем файла</li>
     </ul>
     """
 
 # ===== ЗАПУСК БОТА =====
 if __name__ == "__main__":
     print("🤖 Бот AI2BIZ запущен!")
+    print("✅ Версия: Advanced V3 (ФИНАЛЬНАЯ)")
     print("💾 Таблицы в Supabase: leads_consultation, leads_files, segments, stats")
-    print(f"📱 Канал для подписки: {CHANNEL_ID}")
+    print("📱 Канал для подписки: @it_ai2biz")
+    print("💡 Команды: /start (меню), /cancel (выход)")
     bot.infinity_polling()
