@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-AI2BIZ Telegram Bot - ADVANCED VERSION V3 (ФИНАЛЬНАЯ)
+AI2BIZ Telegram Bot - ADVANCED VERSION V4 (ИСПРАВЛЕННАЯ)
 - Две отдельных анкеты (файлы + консультация)
 - ДВА ТИПА ФАЙЛОВ: 5 ошибок менеджеров или Чек-лист (выбор пользователя)
 - Обязательная подписка на канал it_ai2biz перед анкетой с проверкой
-- Кнопки-варианты ответов для выручки и времени функционирования
-- Уведомления администратору только на консультацию
-- НОВОЕ: Команда /cancel для выхода из цикла
-- НОВОЕ: Проверка введенных данных (Email, Telegram, имя)
+- ИСПРАВЛЕНО: Кнопки подписки теперь работают корректно
+- ИСПРАВЛЕНО: Правильная обработка callback_query для кнопок
+- ИСПРАВЛЕНО: Поддержка обоих форматов канала (-1001234567890 и @it_ai2biz)
 """
 
 import os
@@ -25,7 +24,12 @@ ZOOM_LINK = os.getenv("ZOOM_LINK", "https://zoom.us/YOUR_ZOOM_LINK")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
-CHANNEL_ID = "@it_ai2biz"
+
+# ВАЖНО: Используйте ОДНО из значений ниже:
+# Вариант 1: CHANNEL_ID = "@it_ai2biz"  (публичный канал)
+# Вариант 2: CHANNEL_ID = -1001234567890  (приватный канал - число получите в боте @userinfobot)
+CHANNEL_ID = os.getenv("CHANNEL_ID", "@it_ai2biz")
+CHANNEL_NAME = "it_ai2biz"  # Для ссылки https://t.me/it_ai2biz
 
 FILE_5_MISTAKES = "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/5%20mistakes%20of%20managers.pdf"
 FILE_CHECKLIST = "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Check%20list%2010%20ways.pdf"
@@ -45,7 +49,6 @@ def is_valid_email(email):
 def is_valid_telegram(telegram):
     """Проверяет валидность Telegram"""
     telegram = telegram.strip()
-    # Может быть @username или ссылка https://t.me/username
     if telegram.startswith('@'):
         return len(telegram) > 1 and telegram.replace('@', '').replace('_', '').isalnum()
     elif 't.me/' in telegram:
@@ -268,19 +271,7 @@ def handle_message(message):
         user_state[user_id] = "files"
         user_data[user_id] = {}
         
-        msg = bot.send_message(
-            message.chat.id,
-            """📱 *Важно!* Для получения материалов нужно подписаться на наш канал.
-
-📢 Там мы делимся эксклюзивными материалами и инсайтами по автоматизации.
-
-Подпишись и нажми "Я подписался" 👇
-
-💡 Напиши /cancel если хочешь вернуться в главное меню""",
-            parse_mode="Markdown",
-            reply_markup=get_subscription_buttons()
-        )
-        bot.register_next_step_handler(msg, handle_subscription_check, user_id)
+        show_subscription_buttons(message.chat.id, user_id)
     
     # КОНСУЛЬТАЦИЯ
     elif any(word in text for word in ["консультац", "запись", "созвон", "консульт"]):
@@ -309,71 +300,85 @@ def handle_message(message):
             parse_mode="Markdown"
         )
 
-# ===== КНОПКИ ПОДПИСКИ =====
-def get_subscription_buttons():
-    """Возвращает кнопки для проверки подписки"""
-    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    markup.add("✅ Я подписался")
-    markup.add("🔗 Подписаться на канал")
-    return markup
-
-# ===== ПРОВЕРКА ПОДПИСКИ =====
-def handle_subscription_check(message, user_id):
-    """Проверяет подписку пользователя"""
-    text = message.text.lower().strip()
+# ===== КНОПКИ ПОДПИСКИ (ИСПРАВЛЕННЫЕ) =====
+def show_subscription_buttons(chat_id, user_id):
+    """Показывает кнопки для проверки подписки с использованием callback_query"""
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(
+        telebot.types.InlineKeyboardButton("✅ Я подписался", callback_data="sub_check"),
+        telebot.types.InlineKeyboardButton("🔗 Подписаться на канал", callback_data="sub_link")
+    )
     
-    # Если нажал "Подписаться на канал" - даем ссылку
-    if "подписаться" in text and "подписался" not in text:
-        msg = bot.send_message(
-            message.chat.id,
+    bot.send_message(
+        chat_id,
+        """📱 *Важно!* Для получения материалов нужно подписаться на наш канал.
+
+📢 Там мы делимся эксклюзивными материалами и инсайтами по автоматизации.
+
+Подпишись и нажми "Я подписался" 👇
+
+💡 Напиши /cancel если хочешь вернуться в главное меню""",
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+
+# ===== ОБРАБОТКА CALLBACK КНОПОК =====
+@bot.callback_query_handler(func=lambda call: call.data in ["sub_check", "sub_link"])
+def handle_subscription_callback(call):
+    """Обрабатывает нажатие на кнопки подписки"""
+    user_id = call.from_user.id
+    
+    # Удалить сообщение с кнопками после нажатия
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    
+    if call.data == "sub_link":
+        # Кнопка "Подписаться на канал"
+        bot.send_message(
+            call.message.chat.id,
             f"""🔗 *Подпишись на канал:*
 
-https://t.me/it_ai2biz
+https://t.me/{CHANNEL_NAME}
 
 После подписки нажми кнопку "Я подписался" 👇""",
-            parse_mode="Markdown",
-            reply_markup=get_subscription_buttons()
+            parse_mode="Markdown"
         )
-        bot.register_next_step_handler(msg, handle_subscription_check, user_id)
-        return
+        # Показываем кнопки снова
+        show_subscription_buttons(call.message.chat.id, user_id)
     
-    # Если нажал "Я подписался" - проверяем
-    if "подписался" in text:
+    elif call.data == "sub_check":
+        # Кнопка "Я подписался" - проверяем подписку
         if check_user_subscription(user_id):
             # Пользователь подписан - переходим к выбору файла
+            bot.send_message(
+                call.message.chat.id,
+                "✅ *Отлично! Подписка подтверждена!*",
+                parse_mode="Markdown"
+            )
+            
             markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
             markup.add("📄 5 ошибок менеджеров")
             markup.add("✅ Чек-лист")
             
             msg = bot.send_message(
-                message.chat.id,
-                "✅ *Отлично! Подписка подтверждена!*\n\n📚 Выбери материал:",
+                call.message.chat.id,
+                "📚 *Выбери материал:*",
                 parse_mode="Markdown",
                 reply_markup=markup
             )
             bot.register_next_step_handler(msg, handle_file_selection, user_id)
         else:
-            # Не подписан - просим еще раз
-            msg = bot.send_message(
-                message.chat.id,
+            # Не подписан - показываем ошибку
+            bot.send_message(
+                call.message.chat.id,
                 """❌ *Похоже, ты еще не подписан на канал.*
 
 📢 *Материалы доступны только подписчикам канала!*
 
-Подпишись на канал https://t.me/it_ai2biz и попробуй еще раз 👇""",
-                parse_mode="Markdown",
-                reply_markup=get_subscription_buttons()
+Подпишись на канал и попробуй еще раз 👇""",
+                parse_mode="Markdown"
             )
-            bot.register_next_step_handler(msg, handle_subscription_check, user_id)
-    else:
-        # Неправильный выбор
-        msg = bot.send_message(
-            message.chat.id,
-            "❌ Пожалуйста, выбери один из предложенных вариантов",
-            parse_mode="Markdown",
-            reply_markup=get_subscription_buttons()
-        )
-        bot.register_next_step_handler(msg, handle_subscription_check, user_id)
+            # Показываем кнопки снова
+            show_subscription_buttons(call.message.chat.id, user_id)
 
 # ===== ВЫБОР ФАЙЛА =====
 def handle_file_selection(message, user_id):
@@ -732,7 +737,7 @@ def broadcast_by_segment(admin_id, segment, message_text):
 def index():
     return """
     <h1>✅ AI2BIZ Telegram Bot работает!</h1>
-    <p><strong>Версия:</strong> Advanced V3 (ФИНАЛЬНАЯ)</p>
+    <p><strong>Версия:</strong> Advanced V4 (ИСПРАВЛЕННАЯ)</p>
     <p><strong>Статус:</strong> Готов к использованию</p>
     <hr>
     <h2>📋 Функции:</h2>
@@ -740,8 +745,8 @@ def index():
         <li>✅ Две отдельные анкеты (файлы и консультация)</li>
         <li>✅ Выбор между двумя файлами с проверкой подписки</li>
         <li>✅ Обязательная подписка на @it_ai2biz</li>
-        <li>✅ Автоматическая проверка подписки</li>
-        <li>✅ Кнопки-варианты для выручки и времени</li>
+        <li>✅ ИСПРАВЛЕНО: Кнопки подписки теперь работают корректно</li>
+        <li>✅ ИСПРАВЛЕНО: Использует InlineKeyboardMarkup вместо ReplyKeyboardMarkup</li>
         <li>✅ Валидация данных (Email, Telegram, имя)</li>
         <li>✅ Команда /cancel для выхода из процесса</li>
         <li>✅ Уведомления админу только на консультацию</li>
@@ -751,8 +756,9 @@ def index():
 # ===== ЗАПУСК БОТА =====
 if __name__ == "__main__":
     print("🤖 Бот AI2BIZ запущен!")
-    print("✅ Версия: Advanced V3 (ФИНАЛЬНАЯ)")
+    print("✅ Версия: Advanced V4 (ИСПРАВЛЕННАЯ)")
     print("💾 Таблицы в Supabase: leads_consultation, leads_files, segments, stats")
-    print("📱 Канал для подписки: @it_ai2biz")
+    print(f"📱 Канал для подписки: {CHANNEL_ID}")
     print("💡 Команды: /start (меню), /cancel (выход)")
+    print("🔧 ИСПРАВЛЕНО: Кнопки подписки используют callback_query")
     bot.infinity_polling()
