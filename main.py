@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI2BIZ Telegram Bot - ADVANCED VERSION V2
+AI2BIZ Telegram Bot - ADVANCED VERSION V2 (ИСПРАВЛЕННАЯ)
 - Две отдельных анкеты (файлы + консультация)
 - ДВА ТИПА ФАЙЛОВ: 5 ошибок менеджеров или Чек-лист (выбор пользователя)
 - Обязательная подписка на канал it_ai2biz перед анкетой
@@ -307,22 +307,13 @@ https://t.me/it_ai2biz
     if "подписался" in text:
         if check_user_subscription(user_id):
             # Пользователь подписан - переходим к выбору файла
-            bot.send_message(
-                message.chat.id,
-                "✅ *Отлично! Подписка подтверждена!*\n\n📚 Какой материал тебе нужен?",
-                parse_mode="Markdown",
-                reply_markup=get_file_selection_buttons(),
-                reply_markup=telebot.types.ReplyKeyboardRemove()
-            )
-            
-            # Отправляем кнопки с выбором файлов
             markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
             markup.add("📄 5 ошибок менеджеров")
             markup.add("✅ Чек-лист")
             
             msg = bot.send_message(
                 message.chat.id,
-                "📚 *Выбери материал:*",
+                "✅ *Отлично! Подписка подтверждена!*\n\n📚 Выбери материал:",
                 parse_mode="Markdown",
                 reply_markup=markup
             )
@@ -340,13 +331,6 @@ https://t.me/it_ai2biz
             bot.register_next_step_handler(msg, handle_subscription_check, user_id)
 
 # ===== ВЫБОР ФАЙЛА =====
-def get_file_selection_buttons():
-    """Возвращает кнопки для выбора файла"""
-    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    markup.add("📄 5 ошибок менеджеров")
-    markup.add("✅ Чек-лист")
-    return markup
-
 def handle_file_selection(message, user_id):
     """Обрабатывает выбор файла"""
     text = message.text.lower().strip()
@@ -359,11 +343,15 @@ def handle_file_selection(message, user_id):
         log_action(user_id, "", "FILE_SELECTED", "Выбрал: Чек-лист")
     else:
         # Неправильный выбор
+        markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.add("📄 5 ошибок менеджеров")
+        markup.add("✅ Чек-лист")
+        
         msg = bot.send_message(
             message.chat.id,
             "❌ Пожалуйста, выбери один из предложенных вариантов",
             parse_mode="Markdown",
-            reply_markup=get_file_selection_buttons()
+            reply_markup=markup
         )
         bot.register_next_step_handler(msg, handle_file_selection, user_id)
         return
@@ -644,7 +632,7 @@ def broadcast_by_segment(admin_id, segment, message_text):
 def index():
     return """
     <h1>✅ AI2BIZ Telegram Bot работает!</h1>
-    <p><strong>Версия:</strong> Advanced V2 (выбор файлов + проверка подписки)</p>
+    <p><strong>Версия:</strong> Advanced V2 (выбор файлов + проверка подписки) - ИСПРАВЛЕННАЯ</p>
     <p><strong>Статус:</strong> Готов к использованию</p>
     <hr>
     <h2>📋 Функции:</h2>
