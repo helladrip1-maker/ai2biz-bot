@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 
 """
-AI2BIZ Telegram Bot - VERSION V7.3 FINAL
-- ✅ Полная интеграция Google Sheets (напрямую)
-- ✅ Без зависимости от oauth2client (использует gspread напрямую)
-- ✅ Все ошибки импорта исправлены
+AI2BIZ Telegram Bot - VERSION V7.4 SALES-OPTIMIZED
+- ✅ Полная интеграция Google Sheets
+- ✅ Продажные тексты с эмоджи и акцентами
+- ✅ Логика: горячие на консультацию, холодные - на материалы
 - ✅ Готов к production на Render
 """
 
@@ -220,7 +220,7 @@ def notify_admin_consultation(lead_data):
 
     segment = _calc_segment(lead_data.get("revenue")).upper()
     notification = (
-        "🔔 НОВАЯ ЗАЯВКА НА КОНСУЛЬТАЦИЮ\n\n"
+        "🔔 НОВАЯ ГОРЯЧАЯ ЗАЯВКА\n\n"
         f"Имя: {lead_data.get('name')}\n"
         f"Срок: {lead_data.get('business_duration')}\n"
         f"Telegram: {lead_data.get('telegram')}\n"
@@ -299,9 +299,9 @@ def process_help_command(message):
     delete_messages_after_welcome(chat_id, user_id)
 
     help_text = (
-        "Вопросы или проблемы?\n\n"
-        "Напишите: @glore4\n\n"
-        "Ответим в течение часа."
+        "💬 Есть вопросы?\n\n"
+        "Напиши *@glore4* в Telegram\n\n"
+        "Ответим в течение *рабочего часа*"
     )
     msg = safe_send_message(chat_id, help_text)
     if msg:
@@ -344,19 +344,34 @@ def webhook():
 
 
 def send_welcome_internal(message):
-    """Отправляет приветствие."""
+    """Отправляет приветствие с основной ценностью."""
     user_id = message.from_user.id
-    user_name = message.from_user.first_name or "Гость"
+    user_name = message.from_user.first_name or "Партнер"
     chat_id = message.chat.id
 
     welcome_text = (
-        f"Привет, {user_name}!\n\n"
-        "Я бот AI2BIZ. Помогу получить материалы и записаться на консультацию.\n\n"
-        "Напиши:\n"
-        "• файлы - получить материалы\n"
-        "• консультация - записаться на созвон\n"
-        "• /cancel - главное меню\n"
-        "• /help - поддержка"
+        f"👋 Привет, {user_name}!\n\n"
+        f"Я бот *AI2BIZ* – помогаю бизнесам *увеличивать выручку через автоматизацию продаж* и не терять лидов.\n\n"
+
+        f"🎯 *Что я могу для тебя:*\n"
+        f"1️⃣ Отправить *практические материалы* по автоматизации, которые помогут:\n"
+        f"   • понять, где ты теряешь деньги в воронке\n"
+        f"   • выявить ошибки менеджеров (медленный ответ, отсутствие квалификации)\n"
+        f"   • увеличить конверсию без роста расходов на рекламу\n\n"
+
+        f"2️⃣ Записать тебя на *бесплатную консультацию* с экспертом AI2BIZ, где мы разберем:\n"
+        f"   • текущую ситуацию в твоей воронке\n"
+        f"   • скрытые убытки из-за потери лидов\n"
+        f"   • план конкретных действий для *x4 к выручке за 4 месяца*\n\n"
+
+        f"📊 *Результаты наших клиентов:*\n"
+        f"   • Увеличение конверсии на *300%*\n"
+        f"   • Выручка растет в *4 раза* за 4 месяца\n"
+        f"   • Окупаемость инвестиций за *1 неделю*\n\n"
+
+        f"*Выбери, что тебе нужно:*\n"
+        f"📚 Напиши *«материалы»* → получить бесплатные гайды\n"
+        f"📞 Напиши *«консультация»* → записаться на созвон"
     )
 
     msg = safe_send_message(chat_id, welcome_text)
@@ -374,7 +389,7 @@ def send_welcome(message):
     user_name = message.from_user.first_name or "Гость"
 
     print(f"Пользователь {user_id} запустил бота")
-    log_action(user_id, user_name, "START", "Начало разговора")
+    log_action(user_id, user_name, "START", "Запуск бота")
 
     bot.clear_step_handler_by_chat_id(message.chat.id)
     reset_user_state(user_id)
@@ -408,17 +423,23 @@ def handle_message(message):
 
     save_message_history(user_id, message.message_id)
 
-    # ФАЙЛЫ
-    if any(word in text for word in ["файлы", "материал", "документ", "pdf"]):
+    # МАТЕРИАЛЫ
+    if any(word in text for word in ["материал", "материалы", "файлы", "документ", "pdf", "гайд"]):
         subscription_text = (
-            f"Подпишись на канал @{CHANNEL_NAME}\n\n"
-            "Там публикуем кейсы и материалы по автоматизации продаж.\n\n"
-            "После подписки нажми кнопку ниже."
+            f"📌 *Перед доступом к материалам нужна подписка на канал*\n\n"
+            f"*@{CHANNEL_NAME}*\n\n"
+            f"Там мы публикуем:\n"
+            f"• кейсы клиентов (как увеличить конверсию)\n"
+            f"• реальные примеры роста (x2.5 заявок за месяц)\n"
+            f"• еженедельные рассылки по автоматизации\n"
+            f"• эксклюзивные предложения для подписчиков\n\n"
+            f"🔐 Это защита от спама и garantia качества контента.\n\n"
+            f"Подпишись и нажми кнопку ниже ↓"
         )
         markup = telebot.types.InlineKeyboardMarkup()
         markup.add(
             telebot.types.InlineKeyboardButton(
-                "Я подписался", callback_data="subscribed"
+                "✅ Я подписался на @it_ai2biz", callback_data="subscribed"
             )
         )
         msg = safe_send_message(chat_id, subscription_text, reply_markup=markup)
@@ -429,13 +450,17 @@ def handle_message(message):
     # КОНСУЛЬТАЦИЯ
     if any(
         word in text
-        for word in ["консультац", "запись", "созвон", "консульт", "zoom"]
+        for word in ["консультац", "запись", "созвон", "консульт", "zoom", "встреча", "разговор"]
     ):
         reset_user_state(user_id)
         user_state[user_id] = "consultation"
         user_data[user_id] = {}
 
-        consultation_text = "Записываем на консультацию!\n\nКак тебя зовут?"
+        consultation_text = (
+            f"📞 *Запись на БЕСПЛАТНУЮ консультацию*\n\n"
+            f"Расскажи немного о себе, и мы подготовимся к нашей встрече.\n\n"
+            f"*Как тебя зовут?*"
+        )
         msg = safe_send_message(
             chat_id, consultation_text, reply_markup=telebot.types.ReplyKeyboardRemove()
         )
@@ -446,11 +471,10 @@ def handle_message(message):
 
     # Неизвестная команда
     help_text = (
-        "Не понял команду.\n\n"
-        "Напиши:\n"
-        "• файлы\n"
-        "• консультация\n"
-        "• /cancel или /help"
+        f"Не совсем понял 😕\n\n"
+        f"Выбери один из вариантов:\n"
+        f"📚 *материалы* – получить бесплатные гайды\n"
+        f"📞 *консультация* – записаться на созвон"
     )
     msg = safe_send_message(chat_id, help_text)
     if msg:
@@ -465,19 +489,23 @@ def handle_subscription(call):
     user_id = call.from_user.id
     chat_id = call.message.chat.id
 
-    bot.answer_callback_query(call.id, "Спасибо!")
+    bot.answer_callback_query(call.id, "Спасибо за подписку! 🎉")
 
     reset_user_state(user_id)
     user_state[user_id] = "files"
     user_data[user_id] = {}
 
-    file_selection_text = "Выбери материал:\n• 5 ошибок менеджеров\n• Чек-лист"
+    file_selection_text = (
+        f"✅ Отлично! Теперь выбери материал, который тебя интересует больше всего:\n\n"
+        f"🔴 *5 ошибок менеджеров* – как быстро найти утечки в воронке\n"
+        f"📋 *Чек-лист диагностики* – самопроверка за 15 минут"
+    )
 
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
     )
-    markup.add("5 ошибок менеджеров")
-    markup.add("Чек-лист")
+    markup.add("🔴 5 ошибок менеджеров")
+    markup.add("📋 Чек-лист диагностики")
 
     msg = safe_send_message(chat_id, file_selection_text, reply_markup=markup)
     if msg:
@@ -485,7 +513,7 @@ def handle_subscription(call):
         bot.register_next_step_handler(msg, handle_file_selection, user_id)
 
 
-# ===== ЦЕПОЧКА: ФАЙЛЫ =====
+# ===== ЦЕПОЧКА: МАТЕРИАЛЫ =====
 
 
 def handle_file_selection(message, user_id):
@@ -496,17 +524,19 @@ def handle_file_selection(message, user_id):
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
 
-    if "ошибок" in text or "менеджеров" in text:
+    if "ошибок" in text or "5" in text:
         user_data[user_id]["file_type"] = "5_mistakes"
-    elif "чек" in text or "лист" in text:
+    elif "чек" in text or "диагност" in text:
         user_data[user_id]["file_type"] = "checklist"
     else:
-        invalid_text = "Выбери из предложенных вариантов"
+        invalid_text = (
+            f"Выбери один из предложенных вариантов ↓"
+        )
         markup = telebot.types.ReplyKeyboardMarkup(
             resize_keyboard=True, one_time_keyboard=True
         )
-        markup.add("5 ошибок менеджеров")
-        markup.add("Чек-лист")
+        markup.add("🔴 5 ошибок менеджеров")
+        markup.add("📋 Чек-лист диагностики")
 
         msg = safe_send_message(chat_id, invalid_text, reply_markup=markup)
         if msg:
@@ -514,7 +544,11 @@ def handle_file_selection(message, user_id):
             bot.register_next_step_handler(msg, handle_file_selection, user_id)
         return
 
-    form_text = "Как тебя зовут?"
+    form_text = (
+        f"Спасибо за выбор 👍\n\n"
+        f"Перед отправкой файла заполним краткую анкету (1 минута).\n\n"
+        f"*Как тебя зовут?*"
+    )
     msg = safe_send_message(
         chat_id, form_text, reply_markup=telebot.types.ReplyKeyboardRemove()
     )
@@ -532,7 +566,7 @@ def ask_files_name_check(message, user_id):
     save_message_history(user_id, message.message_id)
 
     if not is_valid_name(name):
-        error_text = "Имя должно быть от 2 до 50 символов"
+        error_text = f"Имя должно быть от 2 до 50 символов"
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
@@ -541,7 +575,7 @@ def ask_files_name_check(message, user_id):
 
     user_data[user_id]["name"] = name
 
-    duration_text = "Сколько работает бизнес?"
+    duration_text = f"⏰ Сколько времени функционирует твой бизнес?"
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
     )
@@ -562,7 +596,7 @@ def ask_files_business_duration(message, user_id):
     save_message_history(user_id, message.message_id)
     user_data[user_id]["business_duration"] = message.text
 
-    telegram_text = "Твой Telegram (@username или t.me/username):"
+    telegram_text = f"📱 Твой Telegram (@username или t.me/username)"
 
     msg = safe_send_message(
         chat_id, telegram_text, reply_markup=telebot.types.ReplyKeyboardRemove()
@@ -581,7 +615,7 @@ def ask_files_telegram_check(message, user_id):
     save_message_history(user_id, message.message_id)
 
     if not is_valid_telegram(telegram):
-        error_text = "Некорректный формат. Используй @username или t.me/username"
+        error_text = f"Некорректный формат. Используй @username или t.me/username"
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
@@ -590,7 +624,9 @@ def ask_files_telegram_check(message, user_id):
 
     user_data[user_id]["telegram"] = telegram
 
-    business_text = "Расскажи о бизнесе (ниша, продукт, проблемы):"
+    business_text = (
+        f"🏢 Расскажи о бизнесе (ниша, продукт, главные проблемы в продажах)"
+    )
     msg = safe_send_message(chat_id, business_text)
     if msg:
         save_message_history(user_id, msg.message_id)
@@ -605,7 +641,7 @@ def ask_files_business(message, user_id):
     save_message_history(user_id, message.message_id)
     user_data[user_id]["business"] = (message.text or "").strip()
 
-    revenue_text = "Выручка в месяц?"
+    revenue_text = f"💰 Выручка в месяц?"
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
     )
@@ -628,9 +664,9 @@ def finish_form_files(message, user_id):
 
     save_message_history(user_id, message.message_id)
     save_lead_files(user_id, app_data)
-    log_action(user_id, app_data.get("name"), "FORM_FILES", "Заявка на файлы")
+    log_action(user_id, app_data.get("name"), "FORM_FILES", "Заявка на материалы")
 
-    sending_text = "Отправляю файл..."
+    sending_text = f"⏳ Секундочку, отправляю файл..."
     msg = safe_send_message(
         chat_id, sending_text, reply_markup=telebot.types.ReplyKeyboardRemove()
     )
@@ -641,14 +677,26 @@ def finish_form_files(message, user_id):
         if app_data.get("file_type") == "5_mistakes":
             file_url = FILE_5_MISTAKES
             file_description = (
-                "5 ошибок менеджеров, которые теряют 50% лидов.\n\n"
-                "Изучи материал и запишись на консультацию для разбора твоей ситуации."
+                f"📄 *5 ОШИБОК МЕНЕДЖЕРОВ, КОТОРЫЕ ТЕРЯЮТ 50% ЛИДОВ*\n\n"
+                f"В этом материале разберемся, почему теряется столько заявок:\n\n"
+                f"❌ Ошибка 1: Медленный ответ (потеря 30% заявок за 1 час)\n"
+                f"❌ Ошибка 2: Отсутствие квалификации (мусорные лиды)\n"
+                f"❌ Ошибка 3: Нет автоматизации (100+ часов в месяц на рутину)\n"
+                f"❌ Ошибка 4: Отсутствие CRM (потеря историй и контекста)\n"
+                f"❌ Ошибка 5: Нет контроля и аналитики (слепое управление)\n\n"
+                f"✅ К концу документа: конкретные решения для каждой ошибки.\n\n"
+                f"💡 *Экономия: за счет исправления этих ошибок клиенты AI2BIZ экономят от 200K в месяц только на потерях.*"
             )
         else:
             file_url = FILE_CHECKLIST
             file_description = (
-                "Чек-лист для быстрой диагностики потерь лидов.\n\n"
-                "Пройди опрос и поймешь, где именно теряется твоя выручка."
+                f"📋 *ЧЕК-ЛИСТ: 10 СПОСОБОВ ПОНЯТЬ, ТЕРЯЕТЕ ЛИ ВЫ ЛИДЫ*\n\n"
+                f"Пройди эту диагностику за 10-15 минут и узнай:\n\n"
+                f"✓ На каком этапе теряется больше всего заявок\n"
+                f"✓ Сколько денег утекает в месяц из-за утечек\n"
+                f"✓ Что можно улучшить без инвестиций\n"
+                f"✓ Четкий план действий на следующую неделю\n\n"
+                f"💰 *После улучшений, в среднем, клиенты добавляют +150K в месячной выручке.*"
             )
 
         doc_msg = bot.send_document(chat_id, file_url, caption=file_description)
@@ -658,9 +706,15 @@ def finish_form_files(message, user_id):
         log_action(user_id, app_data.get("name"), "FILE_SENT", "Файл отправлен")
 
         consultation_offer = (
-            "Файл отправлен!\n\n"
-            "Хочешь получить конкретный план роста для твого бизнеса?\n\n"
-            "Напиши слово 'консультация' и запишись на бесплатный созвон."
+            f"✅ Файл отправлен!\n\n"
+            f"*Что дальше?*\n\n"
+            f"Материал показывает *проблемы*, но реальный рост начинается с *конкретного плана действий*.\n\n"
+            f"На *бесплатной консультации* мы разберем:\n"
+            f"🎯 Твою текущую воронку и точки потерь\n"
+            f"📊 Расчет потерь в деньгах\n"
+            f"💡 Конкретные шаги для увеличения конверсии\n"
+            f"💰 Как получить результат наших клиентов (x4 выручки за 4 месяца)\n\n"
+            f"*Напиши слово «консультация» и запишись на 30-минутный созвон с экспертом AI2BIZ* 👇"
         )
         msg = safe_send_message(chat_id, consultation_offer)
         if msg:
@@ -668,7 +722,7 @@ def finish_form_files(message, user_id):
 
     except Exception as e:
         print(f"Ошибка отправки файла: {e}")
-        error_msg = safe_send_message(chat_id, "Ошибка. Попробуй чуть позже.")
+        error_msg = safe_send_message(chat_id, "Ошибка при отправке. Попробуй позже.")
         if error_msg:
             save_message_history(user_id, error_msg.message_id)
 
@@ -685,7 +739,7 @@ def ask_consultation_name(message, user_id):
     save_message_history(user_id, message.message_id)
 
     if not is_valid_name(name):
-        error_text = "Имя должно быть от 2 до 50 символов"
+        error_text = f"Имя должно быть от 2 до 50 символов"
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
@@ -694,7 +748,7 @@ def ask_consultation_name(message, user_id):
 
     user_data[user_id]["name"] = name
 
-    duration_text = "Сколько работает бизнес?"
+    duration_text = f"⏰ Сколько времени функционирует твой бизнес?"
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
     )
@@ -715,7 +769,7 @@ def ask_consultation_business_duration(message, user_id):
     save_message_history(user_id, message.message_id)
     user_data[user_id]["business_duration"] = message.text
 
-    telegram_text = "Твой Telegram:"
+    telegram_text = f"📱 Твой Telegram для связи"
     msg = safe_send_message(
         chat_id, telegram_text, reply_markup=telebot.types.ReplyKeyboardRemove()
     )
@@ -733,7 +787,7 @@ def ask_consultation_telegram_check(message, user_id):
     save_message_history(user_id, message.message_id)
 
     if not is_valid_telegram(telegram):
-        error_text = "Некорректный формат"
+        error_text = f"Некорректный формат"
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
@@ -742,7 +796,7 @@ def ask_consultation_telegram_check(message, user_id):
 
     user_data[user_id]["telegram"] = telegram
 
-    email_text = "Твой Email (name@example.com):"
+    email_text = f"📧 Твой Email (name@example.com)"
     msg = safe_send_message(chat_id, email_text)
     if msg:
         save_message_history(user_id, msg.message_id)
@@ -758,7 +812,7 @@ def ask_consultation_email_check(message, user_id):
     save_message_history(user_id, message.message_id)
 
     if not is_valid_email(email):
-        error_text = "Некорректный Email"
+        error_text = f"Некорректный Email"
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
@@ -767,7 +821,9 @@ def ask_consultation_email_check(message, user_id):
 
     user_data[user_id]["email"] = email
 
-    business_text = "Расскажи о бизнесе, выручке, проблемах в продажах:"
+    business_text = (
+        f"🏢 Расскажи о бизнесе, выручке и основных проблемах в продажах"
+    )
     msg = safe_send_message(chat_id, business_text)
     if msg:
         save_message_history(user_id, msg.message_id)
@@ -782,7 +838,7 @@ def ask_consultation_business(message, user_id):
     save_message_history(user_id, message.message_id)
     user_data[user_id]["business"] = (message.text or "").strip()
 
-    revenue_text = "Выручка в месяц?"
+    revenue_text = f"💰 Выручка в месяц?"
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
     )
@@ -803,12 +859,12 @@ def ask_consultation_revenue(message, user_id):
     save_message_history(user_id, message.message_id)
     user_data[user_id]["revenue"] = message.text
 
-    participants_text = "Кто будет на созвоне?"
+    participants_text = f"👥 Кто будет на созвоне?"
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
     )
-    markup.add("Я один", "С партнером")
-    markup.add("Не принимаю решений")
+    markup.add("Я один", "С бизнес партнером")
+    markup.add("Я не принимаю решений")
 
     msg = safe_send_message(chat_id, participants_text, reply_markup=markup)
     if msg:
@@ -824,7 +880,7 @@ def ask_consultation_participants(message, user_id):
     save_message_history(user_id, message.message_id)
     user_data[user_id]["participants"] = message.text
 
-    time_text = "Когда удобно выйти в Zoom?"
+    time_text = f"🕐 Когда удобно выйти в Zoom?"
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
     )
@@ -851,12 +907,23 @@ def finish_form_consultation(message, user_id):
     notify_admin_consultation(app_data)
 
     confirmation = (
-        "Спасибо, заявка принята!\n\n"
-        f"Имя: {app_data.get('name')}\n"
-        f"Email: {app_data.get('email')}\n"
-        f"Telegram: {app_data.get('telegram')}\n\n"
-        "Менеджер свяжется с тобой в течение часа и согласует время созвона.\n\n"
-        "Спасибо, что выбрал AI2BIZ!"
+        f"✅ *Заявка принята!*\n\n"
+        f"Резюме:\n"
+        f"👤 *{app_data.get('name')}*\n"
+        f"📧 {app_data.get('email')}\n"
+        f"📱 {app_data.get('telegram')}\n"
+        f"🕐 Предпочитаемое время: {app_data.get('zoom_time')}\n\n"
+
+        f"⏳ *Менеджер AI2BIZ свяжется с тобой в Telegram в течение рабочего часа* и согласует точное время встречи.\n\n"
+
+        f"📍 *На консультации разберем:*\n"
+        f"• почему ты теряешь потенциальных клиентов (скрытые убытки)\n"
+        f"• реальные примеры x4 роста выручки в похожих бизнесах\n"
+        f"• конкретный план внедрения автоматизации\n"
+        f"• сроки и инвестиции\n\n"
+
+        f"🎯 *Спасибо, что выбрал AI2BIZ!*\n"
+        f"Подпишись на канал *@it_ai2biz* для эксклюзивных материалов и кейсов 📣"
     )
 
     msg = safe_send_message(
@@ -872,7 +939,7 @@ def finish_form_consultation(message, user_id):
 @app.route("/")
 def index():
     return (
-        "<h1>AI2BIZ Bot v7.3</h1>"
+        "<h1>AI2BIZ Bot v7.4</h1>"
         "<p>Статус: Активен</p>"
     )
 
@@ -881,7 +948,7 @@ def index():
 
 
 if __name__ == "__main__":
-    print("✅ AI2BIZ Bot v7.3 запущен.")
+    print("✅ AI2BIZ Bot v7.4 запущен.")
     if not GSPREAD_AVAILABLE:
         print(
             "⚠️ gspread не установлен. Добавьте в requirements.txt "
