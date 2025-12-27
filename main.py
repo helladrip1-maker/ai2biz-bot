@@ -5,7 +5,7 @@ AI2BIZ Telegram Bot - VERSION V7.5 MARKDOWN-FIXED
 - ✅ Список команд в главном меню
 - ✅ Полная интеграция Google Sheets
 - ✅ Логика продаж: холодные → материалы → консультация
-- ✅ Возможность ввода номера телефона вместо Telegram
+- ✅ Возможность ввода номера телефона с любыми разделителями
 - ✅ Готов к production на Render
 """
 
@@ -99,11 +99,15 @@ def is_valid_telegram(telegram):
     return False
 
 def is_valid_phone(phone):
-    """Проверяет валидность номера телефона в формате +7-xxx-xxx-xx-xx."""
+    """Проверяет валидность номера телефона: +7 и 10 цифр (любые разделители)."""
     phone = phone.strip()
-    # Должен начинаться с +7 и содержать 10 цифр (формат: +7-xxx-xxx-xx-xx)
-    pattern = r"^\+7-\d{3}-\d{3}-\d{2}-\d{2}$"
-    return re.match(pattern, phone) is not None
+    # Должен начинаться с +7
+    if not phone.startswith("+7"):
+        return False
+    # Извлекаем только цифры после +7
+    digits_only = re.sub(r"\D", "", phone[2:])
+    # Должно быть ровно 10 цифр
+    return len(digits_only) == 10 and digits_only.isdigit()
 
 def is_valid_name(name):
     """Проверяет валидность имени."""
@@ -612,7 +616,7 @@ def ask_files_telegram_check(message, user_id):
             if msg:
                 save_message_history(user_id, msg.message_id)
             bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
-    elif contact.startswith("+7-"):
+    elif contact.startswith("+7"):
         # Это телефон
         if is_valid_phone(contact):
             user_data[user_id]["phone"] = contact
@@ -624,7 +628,7 @@ def ask_files_telegram_check(message, user_id):
                 save_message_history(user_id, msg.message_id)
             bot.register_next_step_handler(msg, ask_files_business, user_id)
         else:
-            error_text = "Некорректный формат номера ❌\n\nИспользуй формат: *+7-xxx-xxx-xx-xx*"
+            error_text = "Некорректный формат номера ❌\n\nИспользуй +7 и 10 цифр номера (пробелы, дефисы опциональны)"
             msg = safe_send_message(
                 chat_id, error_text, parse_mode="Markdown"
             )
@@ -632,7 +636,7 @@ def ask_files_telegram_check(message, user_id):
                 save_message_history(user_id, msg.message_id)
             bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
     else:
-        error_text = "Некорректный ввод ❌\n\nВведи *@username* или номер в формате *+7-xxx-xxx-xx-xx*"
+        error_text = "Некорректный ввод ❌\n\nВведи *@username* или номер телефона с +7"
         msg = safe_send_message(
             chat_id, error_text, parse_mode="Markdown"
         )
@@ -785,7 +789,7 @@ def ask_consultation_telegram_check(message, user_id):
             if msg:
                 save_message_history(user_id, msg.message_id)
             bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
-    elif contact.startswith("+7-"):
+    elif contact.startswith("+7"):
         # Это телефон
         if is_valid_phone(contact):
             user_data[user_id]["phone"] = contact
@@ -795,7 +799,7 @@ def ask_consultation_telegram_check(message, user_id):
                 save_message_history(user_id, msg.message_id)
             bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
         else:
-            error_text = "Некорректный формат номера ❌\n\nИспользуй формат: *+7-xxx-xxx-xx-xx*"
+            error_text = "Некорректный формат номера ❌\n\nИспользуй +7 и 10 цифр номера (пробелы, дефисы опциональны)"
             msg = safe_send_message(
                 chat_id, error_text, parse_mode="Markdown"
             )
@@ -803,7 +807,7 @@ def ask_consultation_telegram_check(message, user_id):
                 save_message_history(user_id, msg.message_id)
             bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
     else:
-        error_text = "Некорректный ввод ❌\n\nВведи *@username* или номер в формате *+7-xxx-xxx-xx-xx*"
+        error_text = "Некорректный ввод ❌\n\nВведи *@username* или номер телефона с +7"
         msg = safe_send_message(
             chat_id, error_text, parse_mode="Markdown"
         )
