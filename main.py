@@ -40,11 +40,11 @@ CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
 
 FILE_5_MISTAKES = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/5%20mistakes%20of%20managers.pdf"
+    "bot-files/5%20mistakes%20of%20managers.pdf?v=20251227"
 )
 FILE_CHECKLIST = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Check%20list%2010%20ways.pdf"
+    "bot-files/Check%20list%2010%20ways.pdf?v=20251227"
 )
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
