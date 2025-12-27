@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 """
 AI2BIZ Telegram Bot - VERSION V7.5 MARKDOWN-FIXED
 - ✅ Markdown-форматирование текстов (**жирный**, *курсив*)
@@ -7,6 +6,7 @@ AI2BIZ Telegram Bot - VERSION V7.5 MARKDOWN-FIXED
 - ✅ Полная интеграция Google Sheets
 - ✅ Логика продаж: холодные → материалы → консультация
 - ✅ Готов к production на Render
+- ✅ Возможность ввода номера телефона, если нет username
 """
 
 import os
@@ -30,11 +30,9 @@ load_dotenv()
 # ===== КОНФИГУРАЦИЯ =====
 TOKEN = os.getenv("TOKEN")
 GOOGLE_SHEETS_ID = os.getenv(
-    "GOOGLE_SHEETS_ID",
-    "1Rmmb8W-1wD4C5I_zPrH_LFaCOnuQ4ny833iba8sAR_I"
+    "GOOGLE_SHEETS_ID", "1Rmmb8W-1wD4C5I_zPrH_LFaCOnuQ4ny833iba8sAR_I"
 )
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}")
-
 ZOOM_LINK = os.getenv("ZOOM_LINK", "https://zoom.us/YOUR_ZOOM_LINK")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
 CHANNEL_NAME = "it_ai2biz"
@@ -53,25 +51,19 @@ bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 # ===== ИНИЦИАЛИЗАЦИЯ GOOGLE SHEETS =====
-
-
 def init_google_sheets():
     """Инициализирует подключение к Google Sheets."""
     if not GSPREAD_AVAILABLE:
         print("ℹ️ gspread не установлен. Google Sheets функции отключены.")
         return None
-
     try:
         if GOOGLE_SERVICE_ACCOUNT_JSON in ("{}", "", None):
             print("⚠️ GOOGLE_SERVICE_ACCOUNT_JSON не настроена.")
             return None
-
         # Парсим JSON с учетными данными сервиса
         creds_dict = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
-
         # Авторизуемся через service_account
         client = gspread.service_account_from_dict(creds_dict)
-
         # Открываем таблицу по ID
         sheet = client.open_by_key(GOOGLE_SHEETS_ID)
         print("✅ Google Sheets подключена успешно!")
@@ -90,8 +82,6 @@ user_message_history = {}
 welcome_message_ids = {}
 
 # ===== ВАЛИДАЦИЯ =====
-
-
 def is_valid_email(email):
     """Проверяет валидность email."""
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
@@ -109,6 +99,14 @@ def is_valid_telegram(telegram):
     if "t.me/" in telegram:
         return True
     return False
+
+
+def is_valid_phone(phone):
+    """Проверяет валидность номера телефона в формате +79806947581."""
+    phone = phone.strip()
+    # Проверяем, что номер начинается с +7 и содержит ровно 11 цифр после +
+    pattern = r"^\+7\d{10}$"
+    return re.match(pattern, phone) is not None
 
 
 def is_valid_name(name):
@@ -130,21 +128,17 @@ def safe_send_message(chat_id, text, **kwargs):
 
 
 # ===== GOOGLE SHEETS ФУНКЦИИ =====
-
-
 def save_to_google_sheets(sheet_name, row_data):
     """Сохраняет строку в Google Sheets."""
     if not google_sheets:
         print(f"ℹ️ Google Sheets отключена, пропускаю сохранение в '{sheet_name}'.")
         return False
-
     try:
         try:
             worksheet = google_sheets.worksheet(sheet_name)
         except Exception:
             print(f"❌ Лист '{sheet_name}' не найден в Google Sheets.")
             return False
-
         worksheet.append_row(row_data)
         print(f"✅ Данные сохранены в '{sheet_name}'.")
         return True
@@ -177,7 +171,6 @@ def save_lead_files(user_id, lead_data):
     """Сохраняет лид, запросивший файлы."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     segment = _calc_segment(lead_data.get("revenue"))
-
     row_data = [
         timestamp,
         str(user_id),
@@ -196,7 +189,6 @@ def save_lead_consultation(user_id, lead_data):
     """Сохраняет лид консультации."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     segment = _calc_segment(lead_data.get("revenue"))
-
     row_data = [
         timestamp,
         str(user_id),
@@ -218,7 +210,6 @@ def notify_admin_consultation(lead_data):
     if ADMIN_CHAT_ID == 0:
         print("ℹ️ ADMIN_CHAT_ID не установлен.")
         return
-
     segment = _calc_segment(lead_data.get("revenue")).upper()
     notification = (
         "🔔\n\n"
@@ -234,7 +225,6 @@ def notify_admin_consultation(lead_data):
         f" *Сегмент:* {segment}\n"
         f" *Дата:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
-
     try:
         safe_send_message(ADMIN_CHAT_ID, notification, parse_mode="Markdown")
         print("✅ Уведомление администратору отправлено.")
@@ -253,22 +243,17 @@ def delete_messages_after_welcome(chat_id, user_id):
     """Удаляет сообщения после приветствия."""
     if user_id not in welcome_message_ids:
         return
-
     welcome_msg_id = welcome_message_ids[user_id]
     if user_id not in user_message_history:
         return
-
     messages_to_delete = [
-        msg_id
-        for msg_id in user_message_history[user_id]
-        if msg_id > welcome_msg_id
+        msg_id for msg_id in user_message_history[user_id] if msg_id > welcome_msg_id
     ]
     for msg_id in messages_to_delete:
         try:
             bot.delete_message(chat_id, msg_id)
         except Exception:
             pass
-
     user_message_history[user_id] = [welcome_msg_id]
 
 
@@ -282,7 +267,6 @@ def process_cancel_command(message):
     """Обрабатывает команду /cancel."""
     user_id = message.from_user.id
     chat_id = message.chat.id
-
     bot.clear_step_handler_by_chat_id(chat_id)
     reset_user_state(user_id)
     delete_messages_after_welcome(chat_id, user_id)
@@ -293,11 +277,9 @@ def process_help_command(message):
     """Обрабатывает команду /help."""
     user_id = message.from_user.id
     chat_id = message.chat.id
-
     bot.clear_step_handler_by_chat_id(chat_id)
     reset_user_state(user_id)
     delete_messages_after_welcome(chat_id, user_id)
-
     help_text = (
         "💬 *Есть вопросы по работе бота или к AI2BIZ?*\n\n"
         "Напиши *@glore4*\n\n"
@@ -313,7 +295,6 @@ def check_for_commands(message):
     """Проверяет /cancel или /help."""
     if not message.text:
         return False
-
     text = message.text.strip()
     if text == "/cancel":
         process_cancel_command(message)
@@ -325,8 +306,6 @@ def check_for_commands(message):
 
 
 # ===== WEBHOOK =====
-
-
 @app.route("/telegram-webhook", methods=["POST"])
 def webhook():
     try:
@@ -341,14 +320,11 @@ def webhook():
 
 
 # ===== ПРИВЕТСТВИЕ =====
-
-
 def send_welcome_internal(message):
     """Отправляет приветствие с основной ценностью."""
     user_id = message.from_user.id
     user_name = message.from_user.first_name or "Партнер"
     chat_id = message.chat.id
-
     welcome_text = (
         f"👋 Привет, {user_name}!\n\n"
         "Я бот *AI2BIZ* – помогу получить материалы по автоматизации продаж и запишу тебя на консультацию.\n\n"
@@ -371,7 +347,6 @@ def send_welcome_internal(message):
         "🔙 /cancel - вернуться в главное меню\n"
         "🛟 /help - связаться с поддержкой\n"
     )
-
     msg = safe_send_message(chat_id, welcome_text, parse_mode="Markdown")
     if msg:
         welcome_message_ids[user_id] = msg.message_id
@@ -379,49 +354,37 @@ def send_welcome_internal(message):
 
 
 # ===== /START =====
-
-
 @bot.message_handler(commands=["start"])
 def send_welcome(message):
     user_id = message.from_user.id
     user_name = message.from_user.first_name or "Гость"
-
     print(f"Пользователь {user_id} запустил бота")
     log_action(user_id, user_name, "START", "Запуск бота")
-
     bot.clear_step_handler_by_chat_id(message.chat.id)
     reset_user_state(user_id)
     send_welcome_internal(message)
 
 
 # ===== /HELP =====
-
-
 @bot.message_handler(commands=["help"])
 def help_command(message):
     process_help_command(message)
 
 
 # ===== /CANCEL =====
-
-
 @bot.message_handler(commands=["cancel"])
 def cancel_command(message):
     process_cancel_command(message)
 
 
 # ===== /COMMANDS =====
-
-
 @bot.message_handler(commands=["commands"])
 def commands_command(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
-
     bot.clear_step_handler_by_chat_id(chat_id)
     reset_user_state(user_id)
     delete_messages_after_welcome(chat_id, user_id)
-
     commands_text = (
         "📋 *Список команд:*\n\n"
         " */start* – главное меню\n"
@@ -439,14 +402,11 @@ def commands_command(message):
 
 
 # ===== ОСНОВНОЙ ХЕНДЛЕР =====
-
-
 @bot.message_handler(func=lambda m: True)
 def handle_message(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
     text = (message.text or "").lower().strip()
-
     save_message_history(user_id, message.message_id)
 
     # МАТЕРИАЛЫ
@@ -506,7 +466,6 @@ def handle_message(message):
         reset_user_state(user_id)
         user_state[user_id] = "consultation"
         user_data[user_id] = {}
-
         consultation_text = (
             "📞 *Отлично, давай запишемся на консультацию*\n\n"
             "Расскажи немного о себе, и мы подготовимся к нашей встрече.\n\n"
@@ -516,11 +475,11 @@ def handle_message(message):
             chat_id,
             consultation_text,
             reply_markup=telebot.types.ReplyKeyboardRemove(),
-            parse_mode="Markdown"
+            parse_mode="Markdown",
         )
         if msg:
             save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_consultation_name, user_id)
+        bot.register_next_step_handler(msg, ask_consultation_name, user_id)
         return
 
     # Неизвестная команда
@@ -537,44 +496,34 @@ def handle_message(message):
 
 
 # ===== CALLBACK =====
-
-
 @bot.callback_query_handler(func=lambda call: call.data == "subscribed")
 def handle_subscription(call):
     user_id = call.from_user.id
     chat_id = call.message.chat.id
-
     bot.answer_callback_query(call.id, "Спасибо за подписку! 🎉")
-
     reset_user_state(user_id)
     user_state[user_id] = "files"
     user_data[user_id] = {}
-
     file_selection_text = (
         "✅ Отлично! Теперь выбери материал, который тебя интересует:\n\n"
         "🔴 *5 ошибок менеджеров*, которые теряют 50% лидов\n"
         "📋 *Чек-лист* 10 способов определить, теряете ли вы заявки"
     )
-
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
     )
     markup.add("🔴 5 ошибок менеджеров")
     markup.add("📋 Чек-лист")
-
     msg = safe_send_message(chat_id, file_selection_text, reply_markup=markup, parse_mode="Markdown")
     if msg:
         save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, handle_file_selection, user_id)
+    bot.register_next_step_handler(msg, handle_file_selection, user_id)
 
 
 # ===== ЦЕПОЧКА: МАТЕРИАЛЫ =====
-
-
 def handle_file_selection(message, user_id):
     if check_for_commands(message):
         return
-
     text = (message.text or "").lower().strip()
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
@@ -590,11 +539,10 @@ def handle_file_selection(message, user_id):
         )
         markup.add("🔴 5 ошибок менеджеров")
         markup.add("📋 Чек-лист")
-
         msg = safe_send_message(chat_id, invalid_text, reply_markup=markup)
         if msg:
             save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, handle_file_selection, user_id)
+        bot.register_next_step_handler(msg, handle_file_selection, user_id)
         return
 
     form_text = (
@@ -606,17 +554,16 @@ def handle_file_selection(message, user_id):
         chat_id,
         form_text,
         reply_markup=telebot.types.ReplyKeyboardRemove(),
-        parse_mode="Markdown"
+        parse_mode="Markdown",
     )
     if msg:
         save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_files_name_check, user_id)
+    bot.register_next_step_handler(msg, ask_files_name_check, user_id)
 
 
 def ask_files_name_check(message, user_id):
     if check_for_commands(message):
         return
-
     name = (message.text or "").strip()
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
@@ -626,74 +573,86 @@ def ask_files_name_check(message, user_id):
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_files_name_check, user_id)
+        bot.register_next_step_handler(msg, ask_files_name_check, user_id)
         return
 
     user_data[user_id]["name"] = name
-
     duration_text = "⏰ Сколько времени функционирует твой бизнес?"
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
     )
     markup.add("До 1 года", "1-3 года")
     markup.add("3-5 лет", "Более 5 лет")
-
     msg = safe_send_message(chat_id, duration_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_files_business_duration, user_id)
+    bot.register_next_step_handler(msg, ask_files_business_duration, user_id)
 
 
 def ask_files_business_duration(message, user_id):
     if check_for_commands(message):
         return
-
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
     user_data[user_id]["business_duration"] = message.text
 
-    telegram_text = "📱 Твой Telegram в формате @username"
+    # Проверяем, есть ли у пользователя username
+    username = message.from_user.username
+    if username:
+        user_data[user_id]["telegram"] = f"@{username}"
+        business_text = (
+            "🏢 Расскажи о своем бизнесе: ниша, продукт, главные проблемы в продажах"
+        )
+        msg = safe_send_message(chat_id, business_text, reply_markup=telebot.types.ReplyKeyboardRemove())
+        if msg:
+            save_message_history(user_id, msg.message_id)
+        bot.register_next_step_handler(msg, ask_files_business, user_id)
+    else:
+        # Если нет username - запрашиваем номер телефона
+        phone_text = (
+            "📱 *У вас не указан username в Telegram*\n\n"
+            "Чтобы мы могли с вами связаться, укажите номер телефона в формате:\n"
+            "*+79806947581*"
+        )
+        msg = safe_send_message(chat_id, phone_text, reply_markup=telebot.types.ReplyKeyboardRemove(), parse_mode="Markdown")
+        if msg:
+            save_message_history(user_id, msg.message_id)
+        bot.register_next_step_handler(msg, ask_files_phone_check, user_id)
 
-    msg = safe_send_message(
-        chat_id, telegram_text, reply_markup=telebot.types.ReplyKeyboardRemove()
-    )
-    if msg:
-        save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
 
-
-def ask_files_telegram_check(message, user_id):
+def ask_files_phone_check(message, user_id):
+    """Проверяет валидность номера телефона для файлов."""
     if check_for_commands(message):
         return
-
-    telegram = (message.text or "").strip()
+    phone = (message.text or "").strip()
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
 
-    if not is_valid_telegram(telegram):
-        error_text = "Некорректный формат. Используй формат @username"
-        msg = safe_send_message(chat_id, error_text)
+    if not is_valid_phone(phone):
+        error_text = (
+            "❌ *Некорректный формат номера телефона*\n\n"
+            "Введите номер в формате: *+79806947581*\n"
+            "(начинается с +7 и содержит 10 цифр после него)"
+        )
+        msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
         if msg:
             save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
+        bot.register_next_step_handler(msg, ask_files_phone_check, user_id)
         return
 
-    user_data[user_id]["telegram"] = telegram
-
+    user_data[user_id]["telegram"] = phone
     business_text = (
         "🏢 Расскажи о своем бизнесе: ниша, продукт, главные проблемы в продажах"
     )
-
     msg = safe_send_message(chat_id, business_text)
     if msg:
         save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_files_business, user_id)
+    bot.register_next_step_handler(msg, ask_files_business, user_id)
 
 
 def ask_files_business(message, user_id):
     if check_for_commands(message):
         return
-
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
     user_data[user_id]["business"] = (message.text or "").strip()
@@ -704,22 +663,20 @@ def ask_files_business(message, user_id):
     )
     markup.add("< 300K", "300K - 1M")
     markup.add("1M - 5M", "5M+")
-
     msg = safe_send_message(chat_id, revenue_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, finish_form_files, user_id)
+    bot.register_next_step_handler(msg, finish_form_files, user_id)
 
 
 def finish_form_files(message, user_id):
     if check_for_commands(message):
         return
-
     user_data[user_id]["revenue"] = message.text
     app_data = user_data[user_id]
     chat_id = message.chat.id
-
     save_message_history(user_id, message.message_id)
+
     save_lead_files(user_id, app_data)
     log_action(user_id, app_data.get("name"), "FORM_FILES", "Заявка на материалы")
 
@@ -754,7 +711,6 @@ def finish_form_files(message, user_id):
         doc_msg = bot.send_document(chat_id, file_url, caption=file_description, parse_mode="Markdown")
         if doc_msg:
             save_message_history(user_id, doc_msg.message_id)
-
         log_action(user_id, app_data.get("name"), "FILE_SENT", "Файл отправлен")
 
         consultation_offer = (
@@ -768,11 +724,9 @@ def finish_form_files(message, user_id):
             "💰 Как можно улучшить показатели за счет автоматизации\n\n"
             " *Напиши слово «консультация» и запишись на 30-минутный созвон с экспертом AI2BIZ* 👇"
         )
-
         msg = safe_send_message(chat_id, consultation_offer, parse_mode="Markdown")
         if msg:
             save_message_history(user_id, msg.message_id)
-
     except Exception as e:
         print(f"Ошибка отправки файла: {e}")
         error_msg = safe_send_message(chat_id, "Ошибка при отправке. Попробуй позже.")
@@ -781,12 +735,9 @@ def finish_form_files(message, user_id):
 
 
 # ===== ЦЕПОЧКА: КОНСУЛЬТАЦИЯ =====
-
-
 def ask_consultation_name(message, user_id):
     if check_for_commands(message):
         return
-
     name = (message.text or "").strip()
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
@@ -796,74 +747,84 @@ def ask_consultation_name(message, user_id):
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_consultation_name, user_id)
+        bot.register_next_step_handler(msg, ask_consultation_name, user_id)
         return
 
     user_data[user_id]["name"] = name
-
     duration_text = "⏰ Сколько времени функционирует твой бизнес?"
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
     )
     markup.add("До 1 года", "1-3 года")
     markup.add("3-5 лет", "Более 5 лет")
-
     msg = safe_send_message(chat_id, duration_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(
-            msg, ask_consultation_business_duration, user_id
-        )
+    bot.register_next_step_handler(
+        msg, ask_consultation_business_duration, user_id
+    )
 
 
 def ask_consultation_business_duration(message, user_id):
     if check_for_commands(message):
         return
-
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
     user_data[user_id]["business_duration"] = message.text
 
-    telegram_text = "📱 Твой Telegram для связи"
-    msg = safe_send_message(
-        chat_id, telegram_text, reply_markup=telebot.types.ReplyKeyboardRemove()
-    )
-    if msg:
-        save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
+    # Проверяем, есть ли у пользователя username
+    username = message.from_user.username
+    if username:
+        user_data[user_id]["telegram"] = f"@{username}"
+        email_text = "📧 Твой Email (name@example.com)"
+        msg = safe_send_message(chat_id, email_text, reply_markup=telebot.types.ReplyKeyboardRemove())
+        if msg:
+            save_message_history(user_id, msg.message_id)
+        bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
+    else:
+        # Если нет username - запрашиваем номер телефона
+        phone_text = (
+            "📱 *У вас не указан username в Telegram*\n\n"
+            "Чтобы мы могли с вами связаться, укажите номер телефона в формате:\n"
+            "*+79806947581*"
+        )
+        msg = safe_send_message(chat_id, phone_text, reply_markup=telebot.types.ReplyKeyboardRemove(), parse_mode="Markdown")
+        if msg:
+            save_message_history(user_id, msg.message_id)
+        bot.register_next_step_handler(msg, ask_consultation_phone_check, user_id)
 
 
-def ask_consultation_telegram_check(message, user_id):
+def ask_consultation_phone_check(message, user_id):
+    """Проверяет валидность номера телефона для консультации."""
     if check_for_commands(message):
         return
-
-    telegram = (message.text or "").strip()
+    phone = (message.text or "").strip()
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
 
-    if not is_valid_telegram(telegram):
-        error_text = "Некорректный формат, введи телеграм в формате @username"
-        msg = safe_send_message(chat_id, error_text)
+    if not is_valid_phone(phone):
+        error_text = (
+            "❌ *Некорректный формат номера телефона*\n\n"
+            "Введите номер в формате: *+79806947581*\n"
+            "(начинается с +7 и содержит 10 цифр после него)"
+        )
+        msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
         if msg:
             save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(
-                msg, ask_consultation_telegram_check, user_id
-            )
+        bot.register_next_step_handler(msg, ask_consultation_phone_check, user_id)
         return
 
-    user_data[user_id]["telegram"] = telegram
-
+    user_data[user_id]["telegram"] = phone
     email_text = "📧 Твой Email (name@example.com)"
     msg = safe_send_message(chat_id, email_text)
     if msg:
         save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
+    bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
 
 
 def ask_consultation_email_check(message, user_id):
     if check_for_commands(message):
         return
-
     email = (message.text or "").strip()
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
@@ -873,27 +834,24 @@ def ask_consultation_email_check(message, user_id):
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(
-                msg, ask_consultation_email_check, user_id
-            )
+        bot.register_next_step_handler(
+            msg, ask_consultation_email_check, user_id
+        )
         return
 
     user_data[user_id]["email"] = email
-
     business_text = (
         "🏢 Какая ниша у бизнеса, и в чем на твой взгляд проблема в данный момент?"
     )
-
     msg = safe_send_message(chat_id, business_text)
     if msg:
         save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_consultation_business, user_id)
+    bot.register_next_step_handler(msg, ask_consultation_business, user_id)
 
 
 def ask_consultation_business(message, user_id):
     if check_for_commands(message):
         return
-
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
     user_data[user_id]["business"] = (message.text or "").strip()
@@ -904,17 +862,15 @@ def ask_consultation_business(message, user_id):
     )
     markup.add("< 300K", "300K - 1M")
     markup.add("1M - 5M", "5M+")
-
     msg = safe_send_message(chat_id, revenue_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_consultation_revenue, user_id)
+    bot.register_next_step_handler(msg, ask_consultation_revenue, user_id)
 
 
 def ask_consultation_revenue(message, user_id):
     if check_for_commands(message):
         return
-
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
     user_data[user_id]["revenue"] = message.text
@@ -925,17 +881,15 @@ def ask_consultation_revenue(message, user_id):
     )
     markup.add("Я один", "Я с бизнес партнером")
     markup.add("Я не принимаю решений в компании")
-
     msg = safe_send_message(chat_id, participants_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_consultation_participants, user_id)
+    bot.register_next_step_handler(msg, ask_consultation_participants, user_id)
 
 
 def ask_consultation_participants(message, user_id):
     if check_for_commands(message):
         return
-
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
     user_data[user_id]["participants"] = message.text
@@ -946,22 +900,20 @@ def ask_consultation_participants(message, user_id):
     )
     markup.add("Завтра 9-12", "Завтра 12-18")
     markup.add("После завтра", "В выходные")
-
     msg = safe_send_message(chat_id, time_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, finish_form_consultation, user_id)
+    bot.register_next_step_handler(msg, finish_form_consultation, user_id)
 
 
 def finish_form_consultation(message, user_id):
     if check_for_commands(message):
         return
-
     user_data[user_id]["zoom_time"] = message.text
     app_data = user_data[user_id]
     chat_id = message.chat.id
-
     save_message_history(user_id, message.message_id)
+
     save_lead_consultation(user_id, app_data)
     log_action(
         user_id,
@@ -986,24 +938,21 @@ def finish_form_consultation(message, user_id):
         "🎯 *Спасибо, что выбрал AI2BIZ!*\n"
         "Подпишись на канал *@it_ai2biz*, чтобы не пропустить наши кейсы и новости автоматизации 📣"
     )
-
     msg = safe_send_message(
         chat_id,
         confirmation,
         reply_markup=telebot.types.ReplyKeyboardRemove(),
-        parse_mode="Markdown"
+        parse_mode="Markdown",
     )
     if msg:
         save_message_history(user_id, msg.message_id)
 
 
 # ===== ГЛАВНАЯ СТРАНИЦА =====
-
-
 @app.route("/")
 def index():
     return (
-        "<h1>AI2BIZ Bot v7.5</h1>"
+        "<h1>AI2BIZ Telegram Bot v7.5</h1>"
         "<p>Статус: Активен</p>"
         "<p>Форматирование: Markdown</p>"
         "<p>Команды: /start, /help, /cancel, /commands</p>"
@@ -1011,8 +960,6 @@ def index():
 
 
 # ===== ЗАПУСК =====
-
-
 if __name__ == "__main__":
     print("✅ AI2BIZ Bot v7.5 запущен.")
     if not GSPREAD_AVAILABLE:
