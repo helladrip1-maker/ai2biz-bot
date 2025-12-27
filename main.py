@@ -99,10 +99,10 @@ def is_valid_telegram(telegram):
     return False
 
 def is_valid_phone(phone):
-    """Проверяет валидность номера телефона в формате +79806947581."""
+    """Проверяет валидность номера телефона в формате +7-xxx-xxx-xx-xx."""
     phone = phone.strip()
-    # Должен начинаться с +7 и содержать 11 цифр (7 и 10 цифр номера)
-    pattern = r"^\+7\d{10}$"
+    # Должен начинаться с +7 и содержать 10 цифр (формат: +7-xxx-xxx-xx-xx)
+    pattern = r"^\+7-\d{3}-\d{3}-\d{2}-\d{2}$"
     return re.match(pattern, phone) is not None
 
 def is_valid_name(name):
@@ -577,7 +577,7 @@ def ask_files_business_duration(message, user_id):
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
     user_data[user_id]["business_duration"] = message.text
-    telegram_text = "📱 Твой Telegram в формате @username"
+    telegram_text = "📱 Твой Telegram (@username) или номер телефона в формате +7-xxx-xxx-xx-xx"
     msg = safe_send_message(
         chat_id, telegram_text, reply_markup=telebot.types.ReplyKeyboardRemove()
     )
@@ -588,60 +588,57 @@ def ask_files_business_duration(message, user_id):
 def ask_files_telegram_check(message, user_id):
     if check_for_commands(message):
         return
-    telegram = (message.text or "").strip()
+    contact = (message.text or "").strip()
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
-    if is_valid_telegram(telegram):
-        user_data[user_id]["telegram"] = telegram
-        business_text = (
-            "🏢 Расскажи о своем бизнесе: ниша, продукт, главные проблемы в продажах"
-        )
-        msg = safe_send_message(chat_id, business_text)
-        if msg:
-            save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_files_business, user_id)
+    
+    # Проверяем, это Telegram или телефон
+    if contact.startswith("@") or "t.me/" in contact.lower():
+        # Это Telegram
+        if is_valid_telegram(contact):
+            user_data[user_id]["telegram"] = contact
+            business_text = (
+                "🏢 Расскажи о своем бизнесе: ниша, продукт, главные проблемы в продажах"
+            )
+            msg = safe_send_message(chat_id, business_text)
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            bot.register_next_step_handler(msg, ask_files_business, user_id)
+        else:
+            error_text = "Некорректный формат Telegram 📱\n\nИспользуй формат: *@username*"
+            msg = safe_send_message(
+                chat_id, error_text, parse_mode="Markdown"
+            )
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
+    elif contact.startswith("+7-"):
+        # Это телефон
+        if is_valid_phone(contact):
+            user_data[user_id]["phone"] = contact
+            business_text = (
+                "🏢 Расскажи о своем бизнесе: ниша, продукт, главные проблемы в продажах"
+            )
+            msg = safe_send_message(chat_id, business_text)
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            bot.register_next_step_handler(msg, ask_files_business, user_id)
+        else:
+            error_text = "Некорректный формат номера ❌\n\nИспользуй формат: *+7-xxx-xxx-xx-xx*"
+            msg = safe_send_message(
+                chat_id, error_text, parse_mode="Markdown"
+            )
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
     else:
-        phone_text = (
-            "Вижу, что Telegram некорректен 📱\n\n"
-            " *Давай по-другому: укажи свой номер телефона*\n"
-            "Формат: +79806947581 (начинается с +7)"
-        )
-        msg = safe_send_message(
-            chat_id,
-            phone_text,
-            reply_markup=telebot.types.ReplyKeyboardRemove(),
-            parse_mode="Markdown",
-        )
-        if msg:
-            save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_files_phone_check, user_id)
-
-def ask_files_phone_check(message, user_id):
-    if check_for_commands(message):
-        return
-    phone = (message.text or "").strip()
-    chat_id = message.chat.id
-    save_message_history(user_id, message.message_id)
-    if not is_valid_phone(phone):
-        error_text = (
-            "Некорректный формат номера ❌\n\n"
-            " *Пожалуйста, введи телефон в формате +79806947581*"
-        )
+        error_text = "Некорректный ввод ❌\n\nВведи *@username* или номер в формате *+7-xxx-xxx-xx-xx*"
         msg = safe_send_message(
             chat_id, error_text, parse_mode="Markdown"
         )
         if msg:
             save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_files_phone_check, user_id)
-        return
-    user_data[user_id]["phone"] = phone
-    business_text = (
-        "🏢 Расскажи о своем бизнесе: ниша, продукт, главные проблемы в продажах"
-    )
-    msg = safe_send_message(chat_id, business_text)
-    if msg:
-        save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, ask_files_business, user_id)
+        bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
 
 def ask_files_business(message, user_id):
     if check_for_commands(message):
@@ -755,7 +752,7 @@ def ask_consultation_business_duration(message, user_id):
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
     user_data[user_id]["business_duration"] = message.text
-    telegram_text = "📱 Твой Telegram для связи"
+    telegram_text = "📱 Твой Telegram (@username) или номер телефона в формате +7-xxx-xxx-xx-xx"
     msg = safe_send_message(
         chat_id, telegram_text, reply_markup=telebot.types.ReplyKeyboardRemove()
     )
@@ -766,56 +763,53 @@ def ask_consultation_business_duration(message, user_id):
 def ask_consultation_telegram_check(message, user_id):
     if check_for_commands(message):
         return
-    telegram = (message.text or "").strip()
+    contact = (message.text or "").strip()
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
-    if is_valid_telegram(telegram):
-        user_data[user_id]["telegram"] = telegram
-        email_text = "📧 Твой Email (name@example.com)"
-        msg = safe_send_message(chat_id, email_text)
-        if msg:
-            save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
+    
+    # Проверяем, это Telegram или телефон
+    if contact.startswith("@") or "t.me/" in contact.lower():
+        # Это Telegram
+        if is_valid_telegram(contact):
+            user_data[user_id]["telegram"] = contact
+            email_text = "📧 Твой Email (name@example.com)"
+            msg = safe_send_message(chat_id, email_text)
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
+        else:
+            error_text = "Некорректный формат Telegram 📱\n\nИспользуй формат: *@username*"
+            msg = safe_send_message(
+                chat_id, error_text, parse_mode="Markdown"
+            )
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
+    elif contact.startswith("+7-"):
+        # Это телефон
+        if is_valid_phone(contact):
+            user_data[user_id]["phone"] = contact
+            email_text = "📧 Твой Email (name@example.com)"
+            msg = safe_send_message(chat_id, email_text)
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
+        else:
+            error_text = "Некорректный формат номера ❌\n\nИспользуй формат: *+7-xxx-xxx-xx-xx*"
+            msg = safe_send_message(
+                chat_id, error_text, parse_mode="Markdown"
+            )
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
     else:
-        phone_text = (
-            "Вижу, что Telegram некорректен 📱\n\n"
-            " *Давай по-другому: укажи свой номер телефона*\n"
-            "Формат: +79806947581 (начинается с +7)"
-        )
-        msg = safe_send_message(
-            chat_id,
-            phone_text,
-            reply_markup=telebot.types.ReplyKeyboardRemove(),
-            parse_mode="Markdown",
-        )
-        if msg:
-            save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_consultation_phone_check, user_id)
-
-def ask_consultation_phone_check(message, user_id):
-    if check_for_commands(message):
-        return
-    phone = (message.text or "").strip()
-    chat_id = message.chat.id
-    save_message_history(user_id, message.message_id)
-    if not is_valid_phone(phone):
-        error_text = (
-            "Некорректный формат номера ❌\n\n"
-            " *Пожалуйста, введи телефон в формате +79806947581*"
-        )
+        error_text = "Некорректный ввод ❌\n\nВведи *@username* или номер в формате *+7-xxx-xxx-xx-xx*"
         msg = safe_send_message(
             chat_id, error_text, parse_mode="Markdown"
         )
         if msg:
             save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_consultation_phone_check, user_id)
-        return
-    user_data[user_id]["phone"] = phone
-    email_text = "📧 Твой Email (name@example.com)"
-    msg = safe_send_message(chat_id, email_text)
-    if msg:
-        save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
+        bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
 
 def ask_consultation_email_check(message, user_id):
     if check_for_commands(message):
@@ -909,7 +903,7 @@ def finish_form_consultation(message, user_id):
         f"📧 {app_data.get('email')}\n"
         f"📱 {app_data.get('telegram') or app_data.get('phone')}\n"
         f"🕐 Предпочитаемое время: {app_data.get('zoom_time')}\n\n"
-        "⏳ *Менеджер AI2BIZ свяжется с тобой в Telegram в течение часа* и согласует точное время встречи.\n\n"
+        "⏳ *Менеджер AI2BIZ свяжется с тобой в течение часа* и согласует точное время встречи.\n\n"
         "📍 *На консультации разберем:*\n"
         "• где теряются лиды\n"
         "• конкретный план внедрения автоматизации\n"
