@@ -301,6 +301,126 @@ def check_for_commands(message):
         return True
     return False
 
+# ===== ФУНКЦИИ ДЛЯ РАССЫЛОК =====
+def _get_all_user_ids_from_sheets():
+    """Возвращает множество всех user_id из листов Leads Files и Leads Consultation."""
+    user_ids = set()
+    if not google_sheets:
+        return user_ids
+    try:
+        try:
+            worksheet_files = google_sheets.worksheet("Leads Files")
+            rows_files = worksheet_files.get_all_values()
+        except Exception:
+            rows_files = []
+        try:
+            worksheet_consultation = google_sheets.worksheet("Leads Consultation")
+            rows_consultation = worksheet_consultation.get_all_values()
+        except Exception:
+            rows_consultation = []
+        for row in rows_files[1:]:
+            if len(row) > 1:
+                try:
+                    user_ids.add(int(row[1]))
+                except ValueError:
+                    pass
+        for row in rows_consultation[1:]:
+            if len(row) > 1:
+                try:
+                    user_ids.add(int(row[1]))
+                except ValueError:
+                    pass
+    except Exception as e:
+        print(f"❌ Ошибка чтения пользователей из Google Sheets: {e}")
+    return user_ids
+
+def _get_user_ids_by_segment(segment):
+    """Возвращает множество user_id по конкретному сегменту."""
+    user_ids = set()
+    if not google_sheets:
+        return user_ids
+    try:
+        try:
+            worksheet_files = google_sheets.worksheet("Leads Files")
+            rows_files = worksheet_files.get_all_values()
+        except Exception:
+            rows_files = []
+        try:
+            worksheet_consultation = google_sheets.worksheet("Leads Consultation")
+            rows_consultation = worksheet_consultation.get_all_values()
+        except Exception:
+            rows_consultation = []
+        for row in rows_files[1:]:
+            if len(row) > 8 and row[8].lower() == segment.lower():
+                try:
+                    user_ids.add(int(row[1]))
+                except ValueError:
+                    pass
+        for row in rows_consultation[1:]:
+            if len(row) > 10 and row[10].lower() == segment.lower():
+                try:
+                    user_ids.add(int(row[1]))
+                except ValueError:
+                    pass
+    except Exception as e:
+        print(f"❌ Ошибка фильтрации по сегменту {segment}: {e}")
+    return user_ids
+
+def _send_broadcast_to_users(admin_chat_id, user_ids, text):
+    """Отправляет рассылку списку пользователей и возвращает статистику."""
+    sent = 0
+    failed = 0
+    for uid in user_ids:
+        try:
+            safe_send_message(uid, text, parse_mode="Markdown")
+            sent += 1
+        except Exception as e:
+            print(f"❌ Ошибка отправки пользователю {uid}: {e}")
+            failed += 1
+    total = len(user_ids)
+    result_text = (
+        "✅ *Рассылка завершена!*\n\n"
+        f"Всего пользователей: *{total}*\n"
+        f"Успешно отправлено: *{sent}*\n"
+        f"Ошибок отправки: *{failed}*"
+    )
+    safe_send_message(admin_chat_id, result_text, parse_mode="Markdown")
+
+def _handle_broadcast_command(message, segment=None, all_users=False):
+    """Общая обработка команд рассылки."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    if ADMIN_CHAT_ID != 0 and user_id != ADMIN_CHAT_ID:
+        safe_send_message(chat_id, "❌ У вас нет прав для использования этой команды.")
+        return
+
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        if all_users:
+            usage = "/broadcast_all Текст рассылки"
+        else:
+            usage = f"/broadcast_{segment} Текст рассылки"
+        safe_send_message(chat_id, f"⚠️ Укажи текст рассылки в формате:\n{usage}")
+        return
+
+    broadcast_text = parts[1].strip()
+
+    if all_users:
+        user_ids = _get_all_user_ids_from_sheets()
+    else:
+        user_ids = _get_user_ids_by_segment(segment)
+
+    if not user_ids:
+        if all_users:
+            msg = "⚠️ Не найдено ни одного пользователя для рассылки."
+        else:
+            msg = f"⚠️ В сегменте *{segment}* пока нет пользователей."
+        safe_send_message(chat_id, msg, parse_mode="Markdown")
+        return
+
+    _send_broadcast_to_users(chat_id, user_ids, broadcast_text)
+
 # ===== WEBHOOK =====
 @app.route("/telegram-webhook", methods=["POST"])
 def webhook():
@@ -390,6 +510,27 @@ def commands_command(message):
     if msg:
         save_message_history(user_id, msg.message_id)
     send_welcome_internal(message)
+
+# ===== РАССЫЛКИ ПО СЕГМЕНТАМ =====
+@bot.message_handler(commands=["broadcast_small"])
+def broadcast_small_command(message):
+    _handle_broadcast_command(message, segment="small")
+
+@bot.message_handler(commands=["broadcast_medium"])
+def broadcast_medium_command(message):
+    _handle_broadcast_command(message, segment="medium")
+
+@bot.message_handler(commands=["broadcast_large"])
+def broadcast_large_command(message):
+    _handle_broadcast_command(message, segment="large")
+
+@bot.message_handler(commands=["broadcast_enterprise"])
+def broadcast_enterprise_command(message):
+    _handle_broadcast_command(message, segment="enterprise")
+
+@bot.message_handler(commands=["broadcast_all"])
+def broadcast_all_command(message):
+    _handle_broadcast_command(message, all_users=True)
 
 # ===== ОСНОВНОЙ ХЕНДЛЕР =====
 @bot.message_handler(func=lambda m: True)
