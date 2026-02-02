@@ -98,10 +98,11 @@ def init_google_sheets():
         try:
             sheet.worksheet("Users")
         except Exception:
-            worksheet = sheet.add_worksheet("Users", 1000, 10)
+            worksheet = sheet.add_worksheet("Users", 1000, 12)
             worksheet.append_row([
                 "User ID", "Username", "Name", "Started", 
-                "Last Action", "State", "Lead Quality", "Answers", "Messages Sent"
+                "Last Action", "State", "Lead Quality", "Answers", "Messages Sent",
+                "Next Scheduled Message", "Run Date"
             ])
             print("✅ Создан лист Users")
         
@@ -120,7 +121,7 @@ welcome_message_ids = {}
 form_answers = {}  # Для формы диагностики
 
 # Инициализация scheduler для дожимов (ПОСЛЕ определения user_data)
-scheduler = FollowUpScheduler(bot, user_data)
+scheduler = FollowUpScheduler(bot, user_data, google_sheets)
 scheduler.start()
 logger.info("✅ Scheduler для дожимов запущен")
 

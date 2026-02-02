@@ -9,9 +9,10 @@ from messages import MESSAGES, FOLLOW_UP_PLAN
 logger = logging.getLogger(__name__)
 
 class FollowUpScheduler:
-    def __init__(self, bot, user_data, scheduler_storage=None):
+    def __init__(self, bot, user_data, google_sheets=None, scheduler_storage=None):
         self.bot = bot
         self.user_data = user_data
+        self.google_sheets = google_sheets
         self.scheduler = BackgroundScheduler()
         # Если нужно, можно добавить RedisJobStore или SQLAlchemyJobStore
         # self.scheduler.add_jobstore('sqlalchemy', url='sqlite:///jobs.sqlite')
@@ -49,6 +50,7 @@ class FollowUpScheduler:
             id=job_id,
             replace_existing=True
         )
+        self.update_sheet_schedule(user_id, next_msg_key, run_date)
 
     def send_message_job(self, user_id, chat_id, message_key):
         """Задача отправки сообщения."""
@@ -143,6 +145,7 @@ class FollowUpScheduler:
             id=job_id_1,
             replace_existing=True
         )
+        self.update_sheet_schedule(user_id, "message_file_followup", run_date_1)
 
         # 2. Через 24 часа переход к message_5 
         # (вызываем schedule_next_message с фейк 'message_4' чтобы сработал переход на 5?)
@@ -167,3 +170,22 @@ class FollowUpScheduler:
             self.scheduler.remove_job(job_id)
         except Exception:
             pass
+
+    def update_sheet_schedule(self, user_id, next_msg, run_date):
+        """Обновляет информацию о запланированных сообщениях в Google Sheets."""
+        if not self.google_sheets:
+            return
+
+        try:
+            worksheet = self.google_sheets.worksheet("Users")
+            cell = worksheet.find(str(user_id))
+            if cell:
+                row = cell.row
+                # Предполагаем, что столбцы J (10) и K (11) свободны или предназначены для этого
+                # 10: Next Scheduled Message
+                # 11: Run Date
+                worksheet.update_cell(row, 10, next_msg)
+                worksheet.update_cell(row, 11, run_date.strftime("%Y-%m-%d %H:%M:%S"))
+                logger.info(f"✅ Google Sheets updated for {user_id}: {next_msg} at {run_date}")
+        except Exception as e:
+            logger.error(f"❌ Failed to update Google Sheets schedule for {user_id}: {e}")
