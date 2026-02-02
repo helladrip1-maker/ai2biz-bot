@@ -73,6 +73,12 @@ FILE_CHECKLIST = (
     "bot-files/Check%20list%2010%20ways.pdf?v=20251227"
 )
 
+FILE_CASE_DEUTSCHER = (
+    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
+    "bot-files/Case%20Deutscher%20Agent.pdf"
+)
+
+
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
@@ -683,6 +689,10 @@ def handle_callback(call):
         elif callback_data == "download_guide":
             bot.answer_callback_query(call.id)
             send_pdf_guide(chat_id, user_id)
+            
+        elif callback_data == "get_case_file":
+            bot.answer_callback_query(call.id)
+            send_case_file(user_id, chat_id)
         
         elif callback_data.startswith("answer_"):
             bot.answer_callback_query(call.id)
@@ -878,6 +888,11 @@ def handle_message(message):
         return
 
     
+    # КЕЙСЫ
+    if any(word in text for word in ["кейс", "deu", "agent", "разбор", "case"]):
+        send_case_file(user_id, chat_id)
+        return
+
     # МАТЕРИАЛЫ
     if any(
         word in text
@@ -907,6 +922,8 @@ def handle_message(message):
         if msg:
             save_message_history(user_id, msg.message_id)
         return
+
+
     
     # КОНСУЛЬТАЦИЯ
     if any(
@@ -1052,6 +1069,43 @@ def send_file_to_user(user_id, chat_id):
     reset_user_state(user_id)
 
     
+def send_case_file(user_id, chat_id):
+    """Отправляет PDF с кейсом Deutscher Agent и планирует следующие сообщения."""
+    # Логируем
+    update_user_action(user_id, "requested_case")
+    # Получаем имя (если известно)
+    u_data = user_data.get(user_id, {})
+    name = u_data.get("name", "User")
+    log_action(user_id, name, "CASE_REQUESTED", "Запросил кейс")
+
+    sending_text = "⏳ Секундочку, отправляю кейс..."
+    msg = safe_send_message(
+        chat_id, sending_text, reply_markup=telebot.types.ReplyKeyboardRemove()
+    )
+    if msg:
+        save_message_history(user_id, msg.message_id)
+
+    try:
+        # Текст из message_case_presentation
+        caption = MESSAGES.get("message_case_presentation", {}).get("text", "Ваш кейс 📂")
+        
+        doc_msg = bot.send_document(
+            chat_id, FILE_CASE_DEUTSCHER, caption=caption, parse_mode="Markdown"
+        )
+        if doc_msg:
+            save_message_history(user_id, doc_msg.message_id)
+            
+        log_action(user_id, name, "CASE_SENT", "Кейс отправлен")
+
+        # Планируем СЛЕДУЮЩИЕ сообщения (как будто мы прошли message_5)
+        # message_5 -> через 24 часа message_6
+        if scheduler:
+            scheduler.schedule_next_message(user_id, chat_id, "message_5")
+
+    except Exception as e:
+        logger.error(f"Ошибка отправки кейса: {e}")
+        safe_send_message(chat_id, "Ошибка при отправке кейса. Попробуй позже.")
+
 # ===== ЦЕПОЧКА: КОНСУЛЬТАЦИЯ =====
 def ask_consultation_name(message, user_id):
 
