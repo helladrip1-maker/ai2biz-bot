@@ -112,17 +112,17 @@ def init_google_sheets():
 
 google_sheets = init_google_sheets()
 
-# Инициализация scheduler для дожимов
-scheduler = FollowUpScheduler(bot, user_data)
-scheduler.start()
-logger.info("✅ Scheduler для дожимов запущен")
-
-# Словари для состояния пользователей
+# Словари для состояния пользователей (СНАЧАЛА определяем их!)
 user_data = {}
 user_state = {}
 user_message_history = {}
 welcome_message_ids = {}
 form_answers = {}  # Для формы диагностики
+
+# Инициализация scheduler для дожимов (ПОСЛЕ определения user_data)
+scheduler = FollowUpScheduler(bot, user_data)
+scheduler.start()
+logger.info("✅ Scheduler для дожимов запущен")
 
 # ===== ВАЛИДАЦИЯ =====
 def is_valid_email(email):
