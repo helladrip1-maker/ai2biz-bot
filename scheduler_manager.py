@@ -178,7 +178,7 @@ class FollowUpScheduler:
 
         try:
             worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id))
+            cell = worksheet.find(str(user_id), in_column=1)
             if cell:
                 row = cell.row
                 # Предполагаем, что столбцы J (10) и K (11) свободны или предназначены для этого

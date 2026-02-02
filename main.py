@@ -196,8 +196,9 @@ def create_or_update_user(user_id, username, first_name, action="", state=""):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         # Пытаемся найти пользователя
+        # Используем поиск по первому столбцу для надежности
         try:
-            cell = worksheet.find(str(user_id))
+            cell = worksheet.find(str(user_id), in_column=1)
             row = cell.row
             
             # Обновляем существующую запись
@@ -209,7 +210,7 @@ def create_or_update_user(user_id, username, first_name, action="", state=""):
                 worksheet.update_cell(row, 6, state)  # State
             logger.info(f"✅ Обновлена запись пользователя {user_id}")
         except Exception:
-            # Создаем новую запись
+            # Создаем новую запись со всеми полями (включая пустые для планировщика)
             worksheet.append_row([
                 str(user_id),
                 username or "",
@@ -219,7 +220,9 @@ def create_or_update_user(user_id, username, first_name, action="", state=""):
                 state or "initial",
                 "",  # Lead Quality
                 "",  # Answers
-                "0"  # Messages Sent
+                "0", # Messages Sent
+                "",  # Next Scheduled Message (col 10)
+                ""   # Run Date (col 11)
             ])
             logger.info(f"✅ Создана запись пользователя {user_id}")
         
@@ -238,7 +241,7 @@ def update_user_action(user_id, action):
     
     try:
         worksheet = google_sheets.worksheet("Users")
-        cell = worksheet.find(str(user_id))
+        cell = worksheet.find(str(user_id), in_column=1)
         if cell:
             row = cell.row
             worksheet.update_cell(row, 5, action)
