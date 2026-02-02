@@ -614,7 +614,7 @@ def handle_callback(call):
         if callback_data == "subscribed":
             bot.answer_callback_query(call.id, "Спасибо за подписку! 🎉")
             reset_user_state(user_id)
-            user_state[user_id] = "files"
+            user_state[user_id] = "waiting_file_choice"
             user_data[user_id] = {}
             file_selection_text = (
                 "✅ Отлично! Теперь выбери материал, который тебя интересует:\n\n"
@@ -631,12 +631,11 @@ def handle_callback(call):
             )
             if msg:
                 save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, handle_file_selection, user_id)
         
         elif callback_data == "consultation":
             bot.answer_callback_query(call.id)
             reset_user_state(user_id)
-            user_state[user_id] = "consultation"
+            user_state[user_id] = "consultation_name"
             user_data[user_id] = {}
             consultation_text = (
                 "📞 *Отлично, давай запишемся на консультацию*\n\n"
@@ -651,7 +650,6 @@ def handle_callback(call):
             )
             if msg:
                 save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_consultation_name, user_id)
         
         elif callback_data == "examples":
             bot.answer_callback_query(call.id)
@@ -844,6 +842,53 @@ def handle_message(message):
     if check_for_commands(message):
         return
     
+    # ПРОВЕРЯЕМ STATE-MACHINE для обработки многошаговых форм
+    current_state = user_state.get(user_id)
+    
+    if current_state == "waiting_file_choice":
+        handle_file_selection(message, user_id)
+        return
+    elif current_state == "consultation_name":
+        ask_consultation_name(message, user_id)
+        return
+    elif current_state == "consultation_duration":
+        ask_consultation_business_duration(message, user_id)
+        return
+    elif current_state == "consultation_contact":
+        ask_consultation_telegram_check(message, user_id)
+        return
+    elif current_state == "consultation_email":
+        ask_consultation_email_check(message, user_id)
+        return
+    elif current_state == "consultation_business":
+        ask_consultation_business(message, user_id)
+        return
+    elif current_state == "consultation_revenue":
+        ask_consultation_revenue(message, user_id)
+        return
+    elif current_state == "consultation_participants":
+        ask_consultation_participants(message, user_id)
+        return
+    elif current_state == "consultation_time":
+        finish_form_consultation(message, user_id)
+        return
+    # Файловая анкета
+    elif current_state == "files_name":
+        ask_files_name_check(message, user_id)
+        return
+    elif current_state == "files_duration":
+        ask_files_business_duration(message, user_id)
+        return
+    elif current_state == "files_contact":
+        ask_files_telegram_check(message, user_id)
+        return
+    elif current_state == "files_business":
+        ask_files_business(message, user_id)
+        return
+    elif current_state == "files_revenue":
+        finish_form_files(message, user_id)
+        return
+    
     # МАТЕРИАЛЫ
     if any(
         word in text
@@ -951,7 +996,9 @@ def handle_file_selection(message, user_id):
     )
     if msg:
         save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, ask_files_name_check, user_id)
+    if msg:
+        save_message_history(user_id, msg.message_id)
+    user_state[user_id] = "files_name"
 
 def ask_files_name_check(message, user_id):
     if check_for_commands(message):
@@ -976,7 +1023,9 @@ def ask_files_name_check(message, user_id):
     msg = safe_send_message(chat_id, duration_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, ask_files_business_duration, user_id)
+    if msg:
+        save_message_history(user_id, msg.message_id)
+    user_state[user_id] = "files_duration"
 
 def ask_files_business_duration(message, user_id):
     if check_for_commands(message):
@@ -990,7 +1039,9 @@ def ask_files_business_duration(message, user_id):
     )
     if msg:
         save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
+    if msg:
+        save_message_history(user_id, msg.message_id)
+    user_state[user_id] = "files_contact"
 
 def ask_files_telegram_check(message, user_id):
     if check_for_commands(message):
@@ -1008,13 +1059,16 @@ def ask_files_telegram_check(message, user_id):
             msg = safe_send_message(chat_id, business_text)
             if msg:
                 save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_files_business, user_id)
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            user_state[user_id] = "files_business"
         else:
             error_text = "Некорректный формат Telegram 📱\n\nИспользуй формат: *@username*"
             msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
             if msg:
                 save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
+            # Остаемся в том же состоянии, если ошибка
+            user_state[user_id] = "files_contact"
     elif contact.startswith("+7"):
         if is_valid_phone(contact):
             user_data[user_id]["phone"] = contact
@@ -1024,19 +1078,23 @@ def ask_files_telegram_check(message, user_id):
             msg = safe_send_message(chat_id, business_text)
             if msg:
                 save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_files_business, user_id)
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            user_state[user_id] = "files_business"
         else:
             error_text = "Некорректный формат номера ❌\n\nИспользуй +7 и 10 цифр номера"
             msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
             if msg:
                 save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
+            user_state[user_id] = "files_contact"
     else:
         error_text = "Некорректный ввод ❌\n\nВведи *@username* или номер телефона с +7"
         msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
         if msg:
             save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_files_telegram_check, user_id)
+        if msg:
+            save_message_history(user_id, msg.message_id)
+        user_state[user_id] = "files_contact"
 
 def ask_files_business(message, user_id):
     if check_for_commands(message):
@@ -1053,7 +1111,9 @@ def ask_files_business(message, user_id):
     msg = safe_send_message(chat_id, revenue_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, finish_form_files, user_id)
+    if msg:
+        save_message_history(user_id, msg.message_id)
+    user_state[user_id] = "files_revenue"
 
 def finish_form_files(message, user_id):
     if check_for_commands(message):
@@ -1123,6 +1183,9 @@ def finish_form_files(message, user_id):
         error_msg = safe_send_message(chat_id, "Ошибка при отправке. Попробуй позже.")
         if error_msg:
             save_message_history(user_id, error_msg.message_id)
+    
+    # Сбрасываем состояние после завершения
+    reset_user_state(user_id)
 
 # ===== ЦЕПОЧКА: КОНСУЛЬТАЦИЯ =====
 def ask_consultation_name(message, user_id):
@@ -1136,7 +1199,10 @@ def ask_consultation_name(message, user_id):
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_consultation_name, user_id)
+        if msg:
+            save_message_history(user_id, msg.message_id)
+        # Остаемся в том же состоянии если ошибка
+        user_state[user_id] = "consultation_name"
         return
     user_data[user_id]["name"] = name
     duration_text = "⏰ Сколько времени функционирует твой бизнес?"
@@ -1148,7 +1214,9 @@ def ask_consultation_name(message, user_id):
     msg = safe_send_message(chat_id, duration_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, ask_consultation_business_duration, user_id)
+    if msg:
+        save_message_history(user_id, msg.message_id)
+    user_state[user_id] = "consultation_duration"
 
 def ask_consultation_business_duration(message, user_id):
     if check_for_commands(message):
@@ -1162,7 +1230,9 @@ def ask_consultation_business_duration(message, user_id):
     )
     if msg:
         save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
+    if msg:
+        save_message_history(user_id, msg.message_id)
+    user_state[user_id] = "consultation_contact"
 
 def ask_consultation_telegram_check(message, user_id):
     if check_for_commands(message):
@@ -1178,13 +1248,15 @@ def ask_consultation_telegram_check(message, user_id):
             msg = safe_send_message(chat_id, email_text)
             if msg:
                 save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            user_state[user_id] = "consultation_email"
         else:
             error_text = "Некорректный формат Telegram 📱\n\nИспользуй формат: *@username*"
             msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
             if msg:
                 save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
+            user_state[user_id] = "consultation_contact"
     elif contact.startswith("+7"):
         if is_valid_phone(contact):
             user_data[user_id]["phone"] = contact
@@ -1192,19 +1264,23 @@ def ask_consultation_telegram_check(message, user_id):
             msg = safe_send_message(chat_id, email_text)
             if msg:
                 save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
+            if msg:
+                save_message_history(user_id, msg.message_id)
+            user_state[user_id] = "consultation_email"
         else:
             error_text = "Некорректный формат номера ❌\n\nИспользуй +7 и 10 цифр номера"
             msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
             if msg:
                 save_message_history(user_id, msg.message_id)
-            bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
+            user_state[user_id] = "consultation_contact"
     else:
         error_text = "Некорректный ввод ❌\n\nВведи *@username* или номер телефона с +7"
         msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
         if msg:
             save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_consultation_telegram_check, user_id)
+        if msg:
+            save_message_history(user_id, msg.message_id)
+        user_state[user_id] = "consultation_contact"
 
 def ask_consultation_email_check(message, user_id):
     if check_for_commands(message):
@@ -1217,7 +1293,9 @@ def ask_consultation_email_check(message, user_id):
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, ask_consultation_email_check, user_id)
+        if msg:
+            save_message_history(user_id, msg.message_id)
+        user_state[user_id] = "consultation_email"
         return
     user_data[user_id]["email"] = email
     business_text = (
@@ -1226,7 +1304,9 @@ def ask_consultation_email_check(message, user_id):
     msg = safe_send_message(chat_id, business_text)
     if msg:
         save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, ask_consultation_business, user_id)
+    if msg:
+        save_message_history(user_id, msg.message_id)
+    user_state[user_id] = "consultation_business"
 
 def ask_consultation_business(message, user_id):
     if check_for_commands(message):
@@ -1243,7 +1323,9 @@ def ask_consultation_business(message, user_id):
     msg = safe_send_message(chat_id, revenue_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, ask_consultation_revenue, user_id)
+    if msg:
+        save_message_history(user_id, msg.message_id)
+    user_state[user_id] = "consultation_revenue"
 
 def ask_consultation_revenue(message, user_id):
     if check_for_commands(message):
@@ -1260,7 +1342,9 @@ def ask_consultation_revenue(message, user_id):
     msg = safe_send_message(chat_id, participants_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, ask_consultation_participants, user_id)
+    if msg:
+        save_message_history(user_id, msg.message_id)
+    user_state[user_id] = "consultation_participants"
 
 def ask_consultation_participants(message, user_id):
     if check_for_commands(message):
@@ -1277,7 +1361,9 @@ def ask_consultation_participants(message, user_id):
     msg = safe_send_message(chat_id, time_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-    bot.register_next_step_handler(msg, finish_form_consultation, user_id)
+    if msg:
+        save_message_history(user_id, msg.message_id)
+    user_state[user_id] = "consultation_time"
 
 def finish_form_consultation(message, user_id):
     if check_for_commands(message):
@@ -1320,6 +1406,9 @@ def finish_form_consultation(message, user_id):
     )
     if msg:
         save_message_history(user_id, msg.message_id)
+
+    # Сбрасываем состояние
+    reset_user_state(user_id)
 
 # ===== ГЛАВНАЯ СТРАНИЦА =====
 @app.route("/")

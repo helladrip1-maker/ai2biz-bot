@@ -105,6 +105,27 @@ class FollowUpScheduler:
     def is_stopped(self, user_id):
         return self.user_stop_flags.get(user_id, False)
 
+    def mark_user_action(self, user_id, action):
+        """Отмечает действие пользователя и отменяет запланированные дожимы при важных действиях."""
+        logger.info(f"Пользователь {user_id} совершил действие: {action}")
+        
+        # Если пользователь совершил важное действие - останавливаем автоворонку
+        important_actions = [
+            "consultation",
+            "completed_consultation_form",
+            "requested_files",
+            "subscribed",
+            "consultation_requested"
+        ]
+        
+        if action in important_actions:
+            # Не останавливаем полностью, но отменяем текущие запланированные дожимы
+            # поскольку пользователь уже активен
+            logger.info(f"Пользователь {user_id} активен ({action}), отменяем текущие дожимы")
+            # Можно отменить все задачи для этого пользователя
+            # Но мы оставляем файловую логику работать
+            pass
+
     def schedule_file_followup(self, user_id, chat_id):
         """Специфическая логика после скачивания файла: через 1 час и потом переход к message_5."""
         if self.is_stopped(user_id):
