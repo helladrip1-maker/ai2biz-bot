@@ -1,6 +1,7 @@
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from datetime import datetime, timedelta
 import telebot
 import pytz
@@ -13,10 +14,18 @@ class FollowUpScheduler:
         self.bot = bot
         self.user_data = user_data
         self.google_sheets = google_sheets
-        self.scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Moscow'))
-        # Если нужно, можно добавить RedisJobStore или SQLAlchemyJobStore
-        # self.scheduler.add_jobstore('sqlalchemy', url='sqlite:///jobs.sqlite')
+        
+        jobstores = {
+            'default': SQLAlchemyJobStore(url='sqlite:///jobs.sqlite')
+        }
+        
+        self.scheduler = BackgroundScheduler(
+            jobstores=jobstores,
+            job_defaults={'coalesce': True, 'misfire_grace_time': 300},
+            timezone=pytz.timezone('Europe/Moscow')
+        )
         self.scheduler.start()
+        logger.info("✅ Scheduler запущен. Задачи восстановлены из БД")
         self.user_stop_flags = {} # user_id -> True/False
 
     def start(self):
