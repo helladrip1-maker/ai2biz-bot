@@ -103,17 +103,22 @@ def init_google_sheets():
         sheet = client.open_by_key(GOOGLE_SHEETS_ID)
         print("✅ Google Sheets подключена успешно!")
         
-        # Создаем лист Users если его нет
+        # Проверяем лист Users
         try:
-            sheet.worksheet("Users")
+            worksheet = sheet.worksheet("Users")
+            headers = worksheet.row_values(1)
+            if "Chat ID" not in headers:
+                # На всякий случай расширяем листы если нужно
+                worksheet.update_cell(1, 12, "Chat ID")
+                logger.info("✅ Добавлен заголовок 'Chat ID' в существующий лист")
         except Exception:
             worksheet = sheet.add_worksheet("Users", 1000, 12)
             worksheet.append_row([
                 "User ID", "Username", "Name", "Started", 
                 "Last Action", "State", "Lead Quality", "Answers", "Messages Sent",
-                "Next Scheduled Message", "Run Date"
+                "Next Scheduled Message", "Run Date", "Chat ID"
             ])
-            print("✅ Создан лист Users")
+            logger.info("✅ Создан лист Users с 12 столбцами")
         
         return sheet
     except Exception as e:
@@ -131,6 +136,72 @@ form_answers = {}  # Для формы диагностики
 
 # Инициализация scheduler для дожимов (ПОСЛЕ определения user_data)
 scheduler = FollowUpScheduler(bot, user_data, google_sheets)
+
+def check_pending_messages():
+    """Проверяет Google Sheets и отправляет просроченные сообщения"""
+    if not google_sheets:
+        return
+    
+    try:
+        worksheet = google_sheets.worksheet("Users")
+        all_records = worksheet.get_all_records()
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        now = datetime.now(moscow_tz)
+        
+        for record in all_records:
+            user_id = record.get("User ID")
+            if not user_id:
+                continue
+            user_id = int(user_id)
+            
+            # Пытаемся получить Chat ID из таблицы, если его нет - пробуем user_id
+            chat_id = record.get("Chat ID")
+            if not chat_id:
+                chat_id = user_id
+            
+            next_msg = record.get("Next Scheduled Message", "")
+            run_date_str = record.get("Run Date", "")
+            
+            if not next_msg or not run_date_str:
+                continue
+            
+            try:
+                # Парсим дату запуска
+                run_date = datetime.strptime(run_date_str, "%Y-%m-%d %H:%M:%S")
+                # Локализуем если она была сохранена наивно (хотя мы сохраняем как строку)
+                # Предполагаем, что она в московском времени, так как мы так сохраняем
+                run_date = moscow_tz.localize(run_date)
+                
+                # Если время уже прошло
+                if run_date <= now:
+                    logger.info(f"🔔 Cron: Найдено просроченное {next_msg} для {user_id}")
+                    
+                    # Отправляем сообщение
+                    scheduler.send_message_job(user_id, chat_id, next_msg, schedule_next=True)
+                    
+                    # Очищаем ячейки в Google Sheets, чтобы не отправить повторно
+                    cell = worksheet.find(str(user_id), in_column=1)
+                    if cell:
+                        worksheet.update_cell(cell.row, 10, "")
+                        worksheet.update_cell(cell.row, 11, "")
+                        
+            except ValueError:
+                pass 
+            except Exception as e:
+                logger.error(f"Ошибка обработки записи {user_id}: {e}")
+                
+    except Exception as e:
+        logger.error(f"Ошибка check_pending_messages: {e}")
+
+# Запускаем проверку каждые 5 минут
+scheduler.scheduler.add_job(
+    check_pending_messages,
+    'interval',
+    minutes=5,
+    id='check_pending',
+    replace_existing=True
+)
+
 scheduler.start()
 logger.info("✅ Scheduler для дожимов запущен")
 
@@ -195,7 +266,7 @@ def save_to_google_sheets(sheet_name, row_data):
         logger.error(f"❌ Ошибка сохранения: {e}")
         return False
 
-def create_or_update_user(user_id, username, first_name, action="", state=""):
+def create_or_update_user(user_id, username, first_name, action="", state="", chat_id=None):
     """Создает или обновляет запись пользователя в Google Sheets."""
     if not google_sheets:
         return False
@@ -218,6 +289,8 @@ def create_or_update_user(user_id, username, first_name, action="", state=""):
                 worksheet.update_cell(row, 5, action)  # Last Action
             if state:
                 worksheet.update_cell(row, 6, state)  # State
+            if chat_id:
+                worksheet.update_cell(row, 12, str(chat_id)) # Chat ID
             logger.info(f"✅ Обновлена запись пользователя {user_id}")
         except Exception:
             # Создаем новую запись со всеми полями (включая пустые для планировщика)
@@ -232,7 +305,8 @@ def create_or_update_user(user_id, username, first_name, action="", state=""):
                 "",  # Answers
                 "0", # Messages Sent
                 "",  # Next Scheduled Message (col 10)
-                ""   # Run Date (col 11)
+                "",   # Run Date (col 11)
+                str(chat_id) if chat_id else "" # Chat ID (col 12)
             ])
             logger.info(f"✅ Создана запись пользователя {user_id}")
         
@@ -496,7 +570,7 @@ def send_welcome_internal(message):
     chat_id = message.chat.id
     
     # Создаем или обновляем пользователя
-    create_or_update_user(user_id, username, user_name, "START_FUNNEL", "initial")
+    create_or_update_user(user_id, username, user_name, "START_FUNNEL", "initial", chat_id=chat_id)
     
     # Отправляем Message 0
     # Используем send_message_job, чтобы логика была единой, но message 0 нужно отправить сразу

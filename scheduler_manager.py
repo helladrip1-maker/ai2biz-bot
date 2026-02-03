@@ -25,7 +25,7 @@ class FollowUpScheduler:
             timezone=pytz.timezone('Europe/Moscow')
         )
         self.scheduler.start()
-        logger.info("✅ Scheduler запущен. Задачи восстановлены из БД")
+        logger.info(f"✅ Scheduler запущен, задач в очереди: {len(self.scheduler.get_jobs())}")
         self.user_stop_flags = {} # user_id -> True/False
 
     def start(self):
