@@ -130,25 +130,11 @@ class FollowUpScheduler:
         return self.user_stop_flags.get(user_id, False)
 
     def mark_user_action(self, user_id, action):
-        """Отмечает действие пользователя и отменяет запланированные дожимы при важных действиях."""
+        """Отмечает, что пользователь совершил действие."""
         logger.info(f"Пользователь {user_id} совершил действие: {action}")
-        
-        # Если пользователь совершил важное действие - останавливаем автоворонку
-        important_actions = [
-            "consultation",
-            "completed_consultation_form",
-            "requested_files",
-            "subscribed",
-            "consultation_requested"
-        ]
-        
-        if action in important_actions:
-            # Не останавливаем полностью, но отменяем текущие запланированные дожимы
-            # поскольку пользователь уже активен
-            logger.info(f"Пользователь {user_id} активен ({action}), отменяем текущие дожимы")
-            # Можно отменить все задачи для этого пользователя
-            # Но мы оставляем файловую логику работать
-            pass
+        # Мы не останавливаем воронку автоматически при действиях.
+        # Остановка происходит только при полной записи на консультацию (stop_funnel).
+        pass
 
     def schedule_message_4_followup(self, user_id, chat_id):
         """Логика после скачивания Checklist (Message 4)."""
