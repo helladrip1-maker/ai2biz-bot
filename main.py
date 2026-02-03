@@ -149,46 +149,39 @@ def check_pending_messages():
         now = datetime.now(moscow_tz)
         
         for record in all_records:
-            user_id = record.get("User ID")
-            if not user_id:
-                continue
-            user_id = int(user_id)
-            
-            # Пытаемся получить Chat ID из таблицы, если его нет - пробуем user_id
-            chat_id = record.get("Chat ID")
-            if not chat_id:
-                chat_id = user_id
-            
-            next_msg = record.get("Next Scheduled Message", "")
-            run_date_str = record.get("Run Date", "")
-            
-            if not next_msg or not run_date_str:
+            user_id_val = record.get("User ID")
+            if not user_id_val:
                 continue
             
             try:
+                user_id = int(user_id_val)
+                chat_id = record.get("Chat ID") or user_id
+                next_msg = record.get("Next Scheduled Message", "")
+                run_date_str = record.get("Run Date", "")
+                
+                if not next_msg or not run_date_str:
+                    continue
+                
                 # Парсим дату запуска
                 run_date = datetime.strptime(run_date_str, "%Y-%m-%d %H:%M:%S")
-                # Локализуем если она была сохранена наивно (хотя мы сохраняем как строку)
-                # Предполагаем, что она в московском времени, так как мы так сохраняем
                 run_date = moscow_tz.localize(run_date)
                 
-                # Если время уже прошло
-                if run_date <= now:
-                    logger.info(f"🔔 Cron: Найдено просроченное {next_msg} для {user_id}")
+                # Проверяем, что сообщение просрочено более чем на 1 минуту
+                # (защита от дублирования)
+                time_diff = (now - run_date).total_seconds()
+                if time_diff > 60: # Просрочено более 1 минуты
+                    logger.info(f"🔔 Cron: Найдено просроченное {next_msg} для {user_id} (опоздание: {int(time_diff/60)} мин)")
                     
-                    # Отправляем сообщение
-                    scheduler.send_message_job(user_id, chat_id, next_msg, schedule_next=True)
+                    # СНАЧАЛА очищаем ячейку (чтобы не отправить дважды)
+                    if scheduler:
+                        scheduler.update_sheet_schedule(user_id, "", None)
+                    logger.info(f"✅ Cleared schedule for {user_id} before sending")
                     
-                    # Очищаем ячейки в Google Sheets, чтобы не отправить повторно
-                    cell = worksheet.find(str(user_id), in_column=1)
-                    if cell:
-                        worksheet.update_cell(cell.row, 10, "")
-                        worksheet.update_cell(cell.row, 11, "")
-                        
-            except ValueError:
-                pass 
+                    # ПОТОМ отправляем сообщение
+                    if scheduler:
+                        scheduler.send_message_job(user_id, chat_id, next_msg, schedule_next=True)
             except Exception as e:
-                logger.error(f"Ошибка обработки записи {user_id}: {e}")
+                logger.error(f"Ошибка обработки записи {user_id_val}: {e}")
                 
     except Exception as e:
         logger.error(f"Ошибка check_pending_messages: {e}")
@@ -203,7 +196,7 @@ scheduler.scheduler.add_job(
 )
 
 scheduler.start()
-logger.info("✅ Scheduler для дожимов запущен")
+logger.info("✅ Scheduler для дожимов запущен (Cron-mode)")
 
 # ===== ВАЛИДАЦИЯ =====
 def is_valid_email(email):
@@ -568,6 +561,11 @@ def send_welcome_internal(message):
     user_name = message.from_user.first_name or "Партнер"
     username = message.from_user.username or ""
     chat_id = message.chat.id
+    
+    # Отменяем все старые задачи для пользователя
+    if scheduler:
+        scheduler.cancel_all_user_jobs(user_id)
+        logger.info(f"✅ Отменены старые задачи для {user_id}")
     
     # Создаем или обновляем пользователя
     create_or_update_user(user_id, username, user_name, "START_FUNNEL", "initial", chat_id=chat_id)
