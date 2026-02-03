@@ -13,6 +13,7 @@ import os
 import re
 import telebot
 import json
+import time
 import logging
 from datetime import datetime, timedelta
 from flask import Flask, request
@@ -39,6 +40,8 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+VERSION = "V9.1-UTC3-FIX"
+logger.info(f"--- BOT RESTARTED: {VERSION} ---")
 
 # ===== КОНФИГУРАЦИЯ =====
 TOKEN = os.getenv("TOKEN")
@@ -75,7 +78,7 @@ FILE_CHECKLIST = (
 
 FILE_CASE_DEUTSCHER = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Case%20Deutscher%20Agent.pdf"
+    "bot-files/Case%20Deutscher%20Agent.pdf?v=20251227"
 )
 
 
@@ -199,7 +202,8 @@ def create_or_update_user(user_id, username, first_name, action="", state=""):
     
     try:
         worksheet = google_sheets.worksheet("Users")
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        timestamp = datetime.now(moscow_tz).strftime("%Y-%m-%d %H:%M:%S")
         
         # Пытаемся найти пользователя
         # Используем поиск по первому столбцу для надежности
@@ -260,7 +264,8 @@ def update_user_action(user_id, action):
 
 def log_action(user_id, name, action, details=""):
     """Логирует действие в лист Stats."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    timestamp = datetime.now(moscow_tz).strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"[{timestamp}] {action} | {name} ({user_id})")
     row_data = [timestamp, str(user_id), name, action, details]
     save_to_google_sheets("Stats", row_data)
@@ -278,7 +283,8 @@ def _calc_segment(revenue_value):
 
 def save_lead_files(user_id, lead_data):
     """Сохраняет лид, запросивший файлы."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    timestamp = datetime.now(moscow_tz).strftime("%Y-%m-%d %H:%M:%S")
     segment = _calc_segment(lead_data.get("revenue"))
     contact = lead_data.get("telegram", "") or lead_data.get("phone", "")
     row_data = [
@@ -296,7 +302,8 @@ def save_lead_files(user_id, lead_data):
 
 def save_lead_consultation(user_id, lead_data):
     """Сохраняет лид консультации."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    timestamp = datetime.now(moscow_tz).strftime("%Y-%m-%d %H:%M:%S")
     segment = _calc_segment(lead_data.get("revenue"))
     contact = lead_data.get("telegram", "") or lead_data.get("phone", "")
     row_data = [
@@ -316,7 +323,8 @@ def save_lead_consultation(user_id, lead_data):
 
 def save_form_answers(user_id, answers):
     """Сохраняет ответы формы диагностики."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    timestamp = datetime.now(moscow_tz).strftime("%Y-%m-%d %H:%M:%S")
     
     # Определяем качество лида
     lead_quality = "cold"
@@ -369,7 +377,7 @@ def notify_admin_consultation(lead_data):
         f" *На созвоне:* {lead_data.get('participants')}\n"
         f" *Время:* {lead_data.get('zoom_time')}\n"
         f" *Сегмент:* {segment}\n"
-        f" *Дата:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        f" *Дата:* {datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')}"
     )
     try:
         safe_send_message(ADMIN_CHAT_ID, notification, parse_mode="Markdown")
@@ -648,24 +656,8 @@ def handle_callback(call):
         
         elif callback_data == "examples":
             bot.answer_callback_query(call.id)
-            examples_text = (
-                "Вот наш самый успешный кейс:\n\n"
-                "📊 Deutsch Agent: +4x выручки за 4 месяца\n"
-                "📊 Ремонтная компания: окупаемость 6 дней\n"
-                "📊 Экспобанк: автоматизировал 80% процессов\n\n"
-                "Хотите записаться на консультацию?"
-            )
-            markup = telebot.types.InlineKeyboardMarkup()
-            markup.add(
-                telebot.types.InlineKeyboardButton("📋 Консультация", callback_data="consultation")
-            )
-            bot.edit_message_text(
-                examples_text,
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                reply_markup=markup,
-                parse_mode="Markdown"
-            )
+            if scheduler:
+                scheduler.send_message_direct(user_id, chat_id, "message_5")
         
         elif callback_data == "start_form":
             bot.answer_callback_query(call.id)
@@ -875,7 +867,9 @@ def handle_message(message):
     
     # КЕЙСЫ
     if any(word in text for word in ["кейс", "deu", "agent", "разбор", "case"]):
-        send_case_file(user_id, chat_id)
+        if scheduler:
+            # Сначала шлем message_5 (вводное сообщение перед файлом), а из него уже кнопка на файл
+            scheduler.send_message_direct(user_id, chat_id, "message_5")
         return
 
     # МАТЕРИАЛЫ И ЧЕК-ЛИСТ

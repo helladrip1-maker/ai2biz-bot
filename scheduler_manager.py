@@ -1,9 +1,9 @@
-
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 from datetime import datetime, timedelta
 import telebot
+import pytz
 from messages import MESSAGES, FOLLOW_UP_PLAN
 
 logger = logging.getLogger(__name__)
@@ -13,7 +13,7 @@ class FollowUpScheduler:
         self.bot = bot
         self.user_data = user_data
         self.google_sheets = google_sheets
-        self.scheduler = BackgroundScheduler()
+        self.scheduler = BackgroundScheduler(timezone=pytz.timezone('Europe/Moscow'))
         # Если нужно, можно добавить RedisJobStore или SQLAlchemyJobStore
         # self.scheduler.add_jobstore('sqlalchemy', url='sqlite:///jobs.sqlite')
         self.scheduler.start()
@@ -34,7 +34,8 @@ class FollowUpScheduler:
             return
 
         next_msg_key, delay_minutes = plan
-        run_date = datetime.now() + timedelta(minutes=delay_minutes)
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        run_date = datetime.now(moscow_tz) + timedelta(minutes=delay_minutes)
         
         job_id = f"funnel_{user_id}_{next_msg_key}"
         
@@ -158,7 +159,8 @@ class FollowUpScheduler:
         self.cancel_job(f"funnel_{user_id}_message_5")
 
         # 1. Через 1 час "Что дальше?" (message_4.2 aka message_file_followup)
-        run_date_1 = datetime.now() + timedelta(minutes=60)
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        run_date_1 = datetime.now(moscow_tz) + timedelta(minutes=60)
         job_id_1 = f"file_followup_1_{user_id}"
         
         logger.info(f"Планирую message_file_followup для {user_id} через 60 мин")
@@ -193,7 +195,8 @@ class FollowUpScheduler:
         self.cancel_job(f"funnel_{user_id}_message_6")
 
         # 1. Через 24 часа "Что дальше?" (message_5.1)
-        run_date_1 = datetime.now() + timedelta(hours=24)
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        run_date_1 = datetime.now(moscow_tz) + timedelta(hours=24)
         job_id_1 = f"case_followup_1_{user_id}"
         
         logger.info(f"Планирую message_5_1 для {user_id} через 24 часа")
