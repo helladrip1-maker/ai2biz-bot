@@ -52,7 +52,27 @@ class FollowUpScheduler:
         )
         self.update_sheet_schedule(user_id, next_msg_key, run_date)
 
-    def send_message_job(self, user_id, chat_id, message_key):
+    def cancel_all_user_jobs(self, user_id):
+        """Отменяет все запланированные задачи для конкретного пользователя."""
+        for job in list(self.scheduler.get_jobs()):
+            if str(user_id) in job.id:
+                try:
+                    self.scheduler.remove_job(job.id)
+                    logger.info(f"Удалена задача {job.id}")
+                except Exception:
+                    pass
+
+    def send_message_direct(self, user_id, chat_id, message_key, schedule_next=True):
+        """Отправляет сообщение немедленно и планирует следующие шаги."""
+        if self.is_stopped(user_id):
+            return
+        
+        # Отменяем текущую очередь чтобы начать новую
+        self.cancel_all_user_jobs(user_id)
+        
+        self.send_message_job(user_id, chat_id, message_key, schedule_next=schedule_next)
+
+    def send_message_job(self, user_id, chat_id, message_key, schedule_next=True):
         """Задача отправки сообщения."""
         if self.is_stopped(user_id):
             logger.info(f"Воронка остановлена для {user_id}, пропускаю {message_key}")
@@ -92,7 +112,8 @@ class FollowUpScheduler:
         try:
             self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
             # После отправки, планируем следующее
-            self.schedule_next_message(user_id, chat_id, message_key)
+            if schedule_next:
+                self.schedule_next_message(user_id, chat_id, message_key)
         except Exception as e:
             logger.error(f"Ошибка отправки сообщения воронки {user_id}: {e}")
 
@@ -128,16 +149,19 @@ class FollowUpScheduler:
             # Но мы оставляем файловую логику работать
             pass
 
-    def schedule_file_followup(self, user_id, chat_id):
-        """Специфическая логика после скачивания файла: через 1 час и потом переход к message_5."""
+    def schedule_message_4_followup(self, user_id, chat_id):
+        """Логика после скачивания Checklist (Message 4)."""
         if self.is_stopped(user_id):
             return
 
-        # 1. Через 1 час "Что дальше?"
+        # Отменяем стандартный переход к message_5 который был запланирован при отправке message_4
+        self.cancel_job(f"funnel_{user_id}_message_5")
+
+        # 1. Через 1 час "Что дальше?" (message_4.2 aka message_file_followup)
         run_date_1 = datetime.now() + timedelta(minutes=60)
         job_id_1 = f"file_followup_1_{user_id}"
         
-        logger.info(f"Планирую file_followup для {user_id} через 60 мин")
+        logger.info(f"Планирую message_file_followup для {user_id} через 60 мин")
         self.scheduler.add_job(
             self.send_message_job,
             trigger=DateTrigger(run_date=run_date_1),
@@ -147,12 +171,7 @@ class FollowUpScheduler:
         )
         self.update_sheet_schedule(user_id, "message_file_followup", run_date_1)
 
-        # 2. Через 24 часа переход к message_5 
-        # (вызываем schedule_next_message с фейк 'message_4' чтобы сработал переход на 5?)
-        # Или явно планируем message 5 через 24+1 час?
-        # MD говорит: "После этого через 24 часа переход к message 5"
-        # То есть через 24 часа после "Что дальше?".
-        
+        # 2. Через 24 часа после message 4.2 -> message 5
         run_date_2 = run_date_1 + timedelta(hours=24)
         job_id_2 = f"file_to_msg5_{user_id}"
         
@@ -161,6 +180,41 @@ class FollowUpScheduler:
             self.send_message_job,
             trigger=DateTrigger(run_date=run_date_2),
             args=[user_id, chat_id, "message_5"],
+            id=job_id_2,
+            replace_existing=True
+        )
+
+    def schedule_message_5_followup(self, user_id, chat_id):
+        """Логика после скачивания Case Study (Message 5)."""
+        if self.is_stopped(user_id):
+            return
+
+        # Отменяем стандартный переход к message_6 который был запланирован при отправке message_5
+        self.cancel_job(f"funnel_{user_id}_message_6")
+
+        # 1. Через 24 часа "Что дальше?" (message_5.1)
+        run_date_1 = datetime.now() + timedelta(hours=24)
+        job_id_1 = f"case_followup_1_{user_id}"
+        
+        logger.info(f"Планирую message_5_1 для {user_id} через 24 часа")
+        self.scheduler.add_job(
+            self.send_message_job,
+            trigger=DateTrigger(run_date=run_date_1),
+            args=[user_id, chat_id, "message_5_1"],
+            id=job_id_1,
+            replace_existing=True
+        )
+        self.update_sheet_schedule(user_id, "message_5_1", run_date_1)
+
+        # 2. Через 24 часа после message 5.1 -> message 6
+        run_date_2 = run_date_1 + timedelta(hours=24)
+        job_id_2 = f"case_to_msg6_{user_id}"
+        
+        logger.info(f"Планирую переход к message_6 для {user_id} через 48 часов")
+        self.scheduler.add_job(
+            self.send_message_job,
+            trigger=DateTrigger(run_date=run_date_2),
+            args=[user_id, chat_id, "message_6"],
             id=job_id_2,
             replace_existing=True
         )

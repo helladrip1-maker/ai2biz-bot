@@ -623,24 +623,9 @@ def handle_callback(call):
     try:
         if callback_data == "subscribed":
             bot.answer_callback_query(call.id, "Спасибо за подписку! 🎉")
-            reset_user_state(user_id)
-            user_state[user_id] = "waiting_file_choice"
-            user_data[user_id] = {}
-            file_selection_text = (
-                "✅ Отлично! Теперь выбери материал, который тебя интересует:\n\n"
-                "🔴 *5 ошибок менеджеров*, которые теряют 50% лидов\n"
-                "📋 *Чек-лист* 10 способов определить, теряете ли вы заявки"
-            )
-            markup = telebot.types.ReplyKeyboardMarkup(
-                resize_keyboard=True, one_time_keyboard=True
-            )
-            markup.add("🔴 5 ошибок менеджеров")
-            markup.add("📋 Чек-лист")
-            msg = safe_send_message(
-                chat_id, file_selection_text, reply_markup=markup, parse_mode="Markdown"
-            )
-            if msg:
-                save_message_history(user_id, msg.message_id)
+            # Сразу запускаем воронку Message 4 (Чек-лист)
+            if scheduler:
+                scheduler.send_message_direct(user_id, chat_id, "message_4")
         
         elif callback_data == "consultation":
             bot.answer_callback_query(call.id)
@@ -686,9 +671,9 @@ def handle_callback(call):
             bot.answer_callback_query(call.id)
             start_diagnostic_form(call.message, user_id)
         
-        elif callback_data == "download_guide":
+        elif callback_data == "download_checklist":
             bot.answer_callback_query(call.id)
-            send_pdf_guide(chat_id, user_id)
+            send_checklist_file(user_id, chat_id)
             
         elif callback_data == "get_case_file":
             bot.answer_callback_query(call.id)
@@ -812,37 +797,37 @@ def finish_diagnostic_form(chat_id, user_id, message_id):
     
     reset_user_state(user_id)
 
-def send_pdf_guide(chat_id, user_id):
-    """Отправляет PDF гайд."""
+def send_checklist_file(user_id, chat_id):
+    """Отправляет PDF чек-лист и планирует следующие сообщения."""
+    update_user_action(user_id, "downloaded_checklist")
+    u_data = user_data.get(user_id, {})
+    name = u_data.get("name", "User")
+    log_action(user_id, name, "CHECKLIST_REQUESTED", "Запросил чек-лист")
+
+    sending_text = "⏳ Секундочку, отправляю чек-лист..."
+    msg = safe_send_message(chat_id, sending_text, reply_markup=telebot.types.ReplyKeyboardRemove())
+    if msg:
+        save_message_history(user_id, msg.message_id)
+
     try:
-        file_url = FILE_5_MISTAKES
-        file_description = (
-            "📄 *5 ОШИБОК МЕНЕДЖЕРОВ, КОТОРЫЕ ТЕРЯЮТ 50% ЛИДОВ*\n\n"
-            "В этом материале разберемся, почему теряется заявки!\n\n"
-            "✅ В конце получишь конкретные решения для каждой ошибки.\n\n"
-            "💡 За счет исправления этих ошибок клиенты AI2BIZ экономят от 200K в месяц только на потерях."
-        )
+        # Текст из message_file_checklist (Message 4.1)
+        caption = MESSAGES.get("message_file_checklist", {}).get("text", "Ваш чеклист 📂")
         
         doc_msg = bot.send_document(
-            chat_id, file_url, caption=file_description, parse_mode="Markdown"
+            chat_id, FILE_CHECKLIST, caption=caption, parse_mode="HTML"
         )
         if doc_msg:
             save_message_history(user_id, doc_msg.message_id)
-        
-        # Отправляем сообщение после PDF
-        after_pdf_text = MESSAGES_DICT.get("after_pdf", 
-            "PDF прикреплен! 📎\n\nПрочитай первых 5 страниц."
-        )
-        msg = safe_send_message(chat_id, after_pdf_text, parse_mode="HTML")
-        if msg:
-            save_message_history(user_id, msg.message_id)
-        
-        update_user_action(user_id, "downloaded_pdf")
-        log_action(user_id, "", "PDF_DOWNLOADED", "Скачан PDF гайд")
-        
+            
+        log_action(user_id, name, "CHECKLIST_SENT", "Чек-лист отправлен")
+
+        # Запускаем логику после файла (через 1 час "Что дальше?" и далее)
+        if scheduler:
+            scheduler.schedule_message_4_followup(user_id, chat_id)
+
     except Exception as e:
-        logger.error(f"Ошибка отправки PDF: {e}")
-        safe_send_message(chat_id, "Ошибка при отправке. Попробуй позже.")
+        logger.error(f"Ошибка отправки чек-листа: {e}")
+        safe_send_message(chat_id, "Ошибка при отправке чек-листа. Попробуй позже.")
 
 # ===== ОСНОВНОЙ ХЕНДЛЕР =====
 @bot.message_handler(func=lambda m: True)
@@ -893,34 +878,11 @@ def handle_message(message):
         send_case_file(user_id, chat_id)
         return
 
-    # МАТЕРИАЛЫ
-    if any(
-        word in text
-        for word in [
-            "материал", "материалы", "файлы", "документ", "pdf",
-            "гайд", "файл", "ошиб", "5", "10", "пять", "десять", "лид",
-        ]
-    ):
-        subscription_text = (
-            "🔐 *Перед доступом к материалам нужна подписка на канал*\n\n"
-            f" *@{CHANNEL_NAME}*\n\n"
-            "Там мы публикуем:\n"
-            "• кейсы клиентов\n"
-            "• реальные примеры роста (x2.5 заявок за месяц)\n"
-            "• эксклюзивные материалы для подписчиков и новости\n\n"
-            "Подпишись и нажми кнопку ниже ↓"
-        )
-        markup = telebot.types.InlineKeyboardMarkup()
-        markup.add(
-            telebot.types.InlineKeyboardButton(
-                "✅ Я подписался", callback_data="subscribed"
-            )
-        )
-        msg = safe_send_message(
-            chat_id, subscription_text, reply_markup=markup, parse_mode="Markdown"
-        )
-        if msg:
-            save_message_history(user_id, msg.message_id)
+    # МАТЕРИАЛЫ И ЧЕК-ЛИСТ
+    if any(word in text for word in ["чек", "10", "десять", "материал", "файлы", "pdf"]):
+        if scheduler:
+            # Отменяем текущие задачи и шлем message_4
+            scheduler.send_message_direct(user_id, chat_id, "message_4")
         return
 
 
@@ -965,108 +927,7 @@ def handle_message(message):
     if msg:
         save_message_history(user_id, msg.message_id)
 
-# ===== ЦЕПОЧКА: МАТЕРИАЛЫ =====
-def handle_file_selection(message, user_id):
-    if check_for_commands(message):
-        return
-    text = (message.text or "").lower().strip()
-    chat_id = message.chat.id
-    save_message_history(user_id, message.message_id)
-    if "ошибок" in text or "5" in text:
-        user_data[user_id]["file_type"] = "5_mistakes"
-    elif "чек" in text or "диагност" in text:
-        user_data[user_id]["file_type"] = "checklist"
-    else:
-        invalid_text = "Выбери один из предложенных вариантов ↓"
-        markup = telebot.types.ReplyKeyboardMarkup(
-            resize_keyboard=True, one_time_keyboard=True
-        )
-        markup.add("🔴 5 ошибок менеджеров")
-        markup.add("📋 Чек-лист")
-        msg = safe_send_message(chat_id, invalid_text, reply_markup=markup)
-        if msg:
-            save_message_history(user_id, msg.message_id)
-        bot.register_next_step_handler(msg, handle_file_selection, user_id)
-        return
-    
-    
-    # Сразу отправляем файл без анкеты
-    send_file_to_user(user_id, chat_id)
-
-def send_file_to_user(user_id, chat_id):
-    """Отправляет выбранный файл пользователю и запускает дожимы."""
-    app_data = user_data.get(user_id, {})
-    file_type = app_data.get("file_type")
-    
-    # Логируем действие (имя берем из ТГ, так как анкеты нет)
-    # Попробуем найти имя в user_data или users table Google Sheets, но упрощенно:
-    user_name = "User" # Можно получить из bot.get_chat(chat_id) но у нас нет объекта bot здесь напрямую если не глобальный
-    # В main.py объект bot глобальный, так что ок.
-    
-    update_user_action(user_id, "requested_files")
-    log_action(user_id, app_data.get("name") or "Unknown", "FILE_REQUESTED", "Запрос файла (без анкеты)")
-
-    sending_text = "⏳ Секундочку, отправляю файл..."
-    msg = safe_send_message(
-        chat_id, sending_text, reply_markup=telebot.types.ReplyKeyboardRemove()
-    )
-    if msg:
-        save_message_history(user_id, msg.message_id)
-    
-    try:
-        if file_type == "5_mistakes":
-            file_url = FILE_5_MISTAKES
-            file_description = (
-                "📄 *5 ОШИБОК МЕНЕДЖЕРОВ, КОТОРЫЕ ТЕРЯЮТ 50% ЛИДОВ*\n\n"
-                "В этом материале разберемся, почему теряется заявки!\n\n"
-                "✅ В конце получишь конкретные решения для каждой ошибки.\n\n"
-                "💡 За счет исправления этих ошибок клиенты AI2BIZ экономят от 200K в месяц только на потерях."
-            )
-        else:
-            file_url = FILE_CHECKLIST
-            file_description = (
-                "📋 *ЧЕК-ЛИСТ: 10 СПОСОБОВ ПОНЯТЬ, ТЕРЯЕТЕ ЛИ ВЫ ЛИДЫ*\n\n"
-                "Пройди эту диагностику за 10-15 минут и узнай:\n\n"
-                "✓ На каком этапе теряется больше всего заявок\n"
-                "✓ Сколько денег утекает в месяц из-за утечек\n"
-                "✓ Что можно улучшить без инвестиций\n"
-                "✓ Четкий план действий на следующую неделю\n\n"
-                "💰 *После улучшений,* в среднем, клиенты добавляют +150K в месячной выручке."
-            )
-        
-        doc_msg = bot.send_document(
-            chat_id, file_url, caption=file_description, parse_mode="Markdown"
-        )
-        if doc_msg:
-            save_message_history(user_id, doc_msg.message_id)
-        
-        log_action(user_id, app_data.get("name") or "Unknown", "FILE_SENT", "Файл отправлен")
-        
-        # Запускаем логику после файла (через 1 час "Что дальше?")
-        if scheduler:
-            scheduler.schedule_file_followup(user_id, chat_id)
-
-        consultation_offer = (
-            "Материал показывает *проблемы*, но реальный рост начинается с *конкретного плана действий*.\n\n"
-            "На *созвоне* мы разберем:\n"
-            "🎯 Твою текущую воронку продаж и точки фокуса\n"
-            "📊 Расчет потерь в деньгах\n"
-            "💡 Конкретные шаги для увеличения конверсии\n"
-            "💰 Как можно улучшить показатели за счет автоматизации\n\n"
-            " *Напиши слово «консультация» и запишись на 30-минутный созвон с экспертом AI2BIZ* 👇"
-        )
-        msg = safe_send_message(chat_id, consultation_offer, parse_mode="Markdown")
-        if msg:
-            save_message_history(user_id, msg.message_id)
-            
-    except Exception as e:
-        logger.error(f"Ошибка отправки файла: {e}")
-        error_msg = safe_send_message(chat_id, "Ошибка при отправке. Попробуй позже.")
-        if error_msg:
-            save_message_history(user_id, error_msg.message_id)
-            
-    # Сбрасываем состояние
-    reset_user_state(user_id)
+# ЦЕПОЧКА: МАТЕРИАЛЫ - УДАЛЕНО (теперь напрямую через message_4)
 
     
 def send_case_file(user_id, chat_id):
@@ -1097,10 +958,9 @@ def send_case_file(user_id, chat_id):
             
         log_action(user_id, name, "CASE_SENT", "Кейс отправлен")
 
-        # Планируем СЛЕДУЮЩИЕ сообщения (как будто мы прошли message_5)
-        # message_5 -> через 24 часа message_6
+        # Планируем СЛЕДУЮЩИЕ сообщения (message 5.1 и message 6)
         if scheduler:
-            scheduler.schedule_next_message(user_id, chat_id, "message_5")
+            scheduler.schedule_message_5_followup(user_id, chat_id)
 
     except Exception as e:
         logger.error(f"Ошибка отправки кейса: {e}")
