@@ -1049,7 +1049,7 @@ def send_case_file(user_id, chat_id):
         caption = MESSAGES.get("message_case_presentation", {}).get("text", "Ваш кейс 📂")
         
         doc_msg = bot.send_document(
-            chat_id, FILE_CASE_DEUTSCHER, caption=caption, parse_mode="Markdown"
+            chat_id, FILE_CASE_DEUTSCHER, caption=caption, parse_mode="HTML"
         )
         if doc_msg:
             save_message_history(user_id, doc_msg.message_id)
