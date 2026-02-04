@@ -255,9 +255,7 @@ FOLLOW_UP_PLAN = {
     "message_2": ("message_3", 30),      # 30 мин (было 60)
     "message_3": ("message_4", 24 * 60), # 24 часа
     "message_4": ("message_5", 24 * 60), # 24 часа
-    "message_file_followup": ("message_5", 24 * 60), # 24 часа после "Что дальше?" (после чеклиста)
     "message_5": ("message_6", 24 * 60), # 24 часа
-    "message_5_1": ("message_6", 24 * 60), # 24 часа после "Что дальше?" (после кейса)
     "message_6": ("message_7", 72 * 60), # 72 часа
 }
 

@@ -5,4 +5,4 @@ python-dotenv==1.0.0
 gunicorn==21.2.0
 google-auth==2.25.2
 APScheduler==3.10.4
-SQLAlchemy>=2.0.35
+pytz==2024.1

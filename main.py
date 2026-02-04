@@ -13,7 +13,6 @@ import os
 import re
 import telebot
 import json
-import time
 import logging
 from datetime import datetime, timedelta
 from flask import Flask, request
@@ -40,8 +39,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-VERSION = "V9.1-UTC3-FIX"
-logger.info(f"--- BOT RESTARTED: {VERSION} ---")
 
 # ===== КОНФИГУРАЦИЯ =====
 TOKEN = os.getenv("TOKEN")
@@ -78,7 +75,7 @@ FILE_CHECKLIST = (
 
 FILE_CASE_DEUTSCHER = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Case%20Deutscher%20Agent.pdf?v=20251227"
+    "bot-files/Case%20Deutscher%20Agent.pdf"
 )
 
 
@@ -103,22 +100,33 @@ def init_google_sheets():
         sheet = client.open_by_key(GOOGLE_SHEETS_ID)
         print("✅ Google Sheets подключена успешно!")
         
-        # Проверяем лист Users
+        # Создаем лист Users если его нет
         try:
-            worksheet = sheet.worksheet("Users")
-            headers = worksheet.row_values(1)
-            if "Chat ID" not in headers:
-                # На всякий случай расширяем листы если нужно
-                worksheet.update_cell(1, 12, "Chat ID")
-                logger.info("✅ Добавлен заголовок 'Chat ID' в существующий лист")
+            sheet.worksheet("Users")
         except Exception:
             worksheet = sheet.add_worksheet("Users", 1000, 12)
             worksheet.append_row([
                 "User ID", "Username", "Name", "Started", 
                 "Last Action", "State", "Lead Quality", "Answers", "Messages Sent",
-                "Next Scheduled Message", "Run Date", "Chat ID"
+                "Next Scheduled Message", "Run Date", "Chat ID",
+                "Last Sent Message", "Last Sent At", "Last Send Status"
             ])
-            logger.info("✅ Создан лист Users с 12 столбцами")
+            print("✅ Создан лист Users")
+        else:
+            # Обновляем заголовок, если отсутствует Chat ID
+            try:
+                worksheet = sheet.worksheet("Users")
+                headers = worksheet.row_values(1)
+                if "Chat ID" not in headers:
+                    worksheet.update_cell(1, 12, "Chat ID")
+                if "Last Sent Message" not in headers:
+                    worksheet.update_cell(1, 13, "Last Sent Message")
+                if "Last Sent At" not in headers:
+                    worksheet.update_cell(1, 14, "Last Sent At")
+                if "Last Send Status" not in headers:
+                    worksheet.update_cell(1, 15, "Last Send Status")
+            except Exception:
+                pass
         
         return sheet
     except Exception as e:
@@ -136,67 +144,8 @@ form_answers = {}  # Для формы диагностики
 
 # Инициализация scheduler для дожимов (ПОСЛЕ определения user_data)
 scheduler = FollowUpScheduler(bot, user_data, google_sheets)
-
-def check_pending_messages():
-    """Проверяет Google Sheets и отправляет просроченные сообщения"""
-    if not google_sheets:
-        return
-    
-    try:
-        worksheet = google_sheets.worksheet("Users")
-        all_records = worksheet.get_all_records()
-        moscow_tz = pytz.timezone('Europe/Moscow')
-        now = datetime.now(moscow_tz)
-        
-        for record in all_records:
-            user_id_val = record.get("User ID")
-            if not user_id_val:
-                continue
-            
-            try:
-                user_id = int(user_id_val)
-                chat_id = record.get("Chat ID") or user_id
-                next_msg = record.get("Next Scheduled Message", "")
-                run_date_str = record.get("Run Date", "")
-                
-                if not next_msg or not run_date_str:
-                    continue
-                
-                # Парсим дату запуска
-                run_date = datetime.strptime(run_date_str, "%Y-%m-%d %H:%M:%S")
-                run_date = moscow_tz.localize(run_date)
-                
-                # Проверяем, что сообщение просрочено более чем на 1 минуту
-                # (защита от дублирования)
-                time_diff = (now - run_date).total_seconds()
-                if time_diff > 60: # Просрочено более 1 минуты
-                    logger.info(f"🔔 Cron: Найдено просроченное {next_msg} для {user_id} (опоздание: {int(time_diff/60)} мин)")
-                    
-                    # СНАЧАЛА очищаем ячейку (чтобы не отправить дважды)
-                    if scheduler:
-                        scheduler.update_sheet_schedule(user_id, "", None)
-                    logger.info(f"✅ Cleared schedule for {user_id} before sending")
-                    
-                    # ПОТОМ отправляем сообщение
-                    if scheduler:
-                        scheduler.send_message_job(user_id, chat_id, next_msg, schedule_next=True)
-            except Exception as e:
-                logger.error(f"Ошибка обработки записи {user_id_val}: {e}")
-                
-    except Exception as e:
-        logger.error(f"Ошибка check_pending_messages: {e}")
-
-# Запускаем проверку каждые 5 минут
-scheduler.scheduler.add_job(
-    check_pending_messages,
-    'interval',
-    minutes=5,
-    id='check_pending',
-    replace_existing=True
-)
-
 scheduler.start()
-logger.info("✅ Scheduler для дожимов запущен (Cron-mode)")
+logger.info("✅ Scheduler для дожимов запущен")
 
 # ===== ВАЛИДАЦИЯ =====
 def is_valid_email(email):
@@ -266,8 +215,7 @@ def create_or_update_user(user_id, username, first_name, action="", state="", ch
     
     try:
         worksheet = google_sheets.worksheet("Users")
-        moscow_tz = pytz.timezone('Europe/Moscow')
-        timestamp = datetime.now(moscow_tz).strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         # Пытаемся найти пользователя
         # Используем поиск по первому столбцу для надежности
@@ -282,8 +230,8 @@ def create_or_update_user(user_id, username, first_name, action="", state="", ch
                 worksheet.update_cell(row, 5, action)  # Last Action
             if state:
                 worksheet.update_cell(row, 6, state)  # State
-            if chat_id:
-                worksheet.update_cell(row, 12, str(chat_id)) # Chat ID
+            if chat_id is not None:
+                worksheet.update_cell(row, 12, str(chat_id))  # Chat ID
             logger.info(f"✅ Обновлена запись пользователя {user_id}")
         except Exception:
             # Создаем новую запись со всеми полями (включая пустые для планировщика)
@@ -298,8 +246,11 @@ def create_or_update_user(user_id, username, first_name, action="", state="", ch
                 "",  # Answers
                 "0", # Messages Sent
                 "",  # Next Scheduled Message (col 10)
-                "",   # Run Date (col 11)
-                str(chat_id) if chat_id else "" # Chat ID (col 12)
+                "",  # Run Date (col 11)
+                str(chat_id) if chat_id is not None else "",  # Chat ID (col 12)
+                "",  # Last Sent Message (col 13)
+                "",  # Last Sent At (col 14)
+                ""   # Last Send Status (col 15)
             ])
             logger.info(f"✅ Создана запись пользователя {user_id}")
         
@@ -331,8 +282,7 @@ def update_user_action(user_id, action):
 
 def log_action(user_id, name, action, details=""):
     """Логирует действие в лист Stats."""
-    moscow_tz = pytz.timezone('Europe/Moscow')
-    timestamp = datetime.now(moscow_tz).strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"[{timestamp}] {action} | {name} ({user_id})")
     row_data = [timestamp, str(user_id), name, action, details]
     save_to_google_sheets("Stats", row_data)
@@ -350,8 +300,7 @@ def _calc_segment(revenue_value):
 
 def save_lead_files(user_id, lead_data):
     """Сохраняет лид, запросивший файлы."""
-    moscow_tz = pytz.timezone('Europe/Moscow')
-    timestamp = datetime.now(moscow_tz).strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     segment = _calc_segment(lead_data.get("revenue"))
     contact = lead_data.get("telegram", "") or lead_data.get("phone", "")
     row_data = [
@@ -369,8 +318,7 @@ def save_lead_files(user_id, lead_data):
 
 def save_lead_consultation(user_id, lead_data):
     """Сохраняет лид консультации."""
-    moscow_tz = pytz.timezone('Europe/Moscow')
-    timestamp = datetime.now(moscow_tz).strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     segment = _calc_segment(lead_data.get("revenue"))
     contact = lead_data.get("telegram", "") or lead_data.get("phone", "")
     row_data = [
@@ -390,8 +338,7 @@ def save_lead_consultation(user_id, lead_data):
 
 def save_form_answers(user_id, answers):
     """Сохраняет ответы формы диагностики."""
-    moscow_tz = pytz.timezone('Europe/Moscow')
-    timestamp = datetime.now(moscow_tz).strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Определяем качество лида
     lead_quality = "cold"
@@ -444,7 +391,7 @@ def notify_admin_consultation(lead_data):
         f" *На созвоне:* {lead_data.get('participants')}\n"
         f" *Время:* {lead_data.get('zoom_time')}\n"
         f" *Сегмент:* {segment}\n"
-        f" *Дата:* {datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y-%m-%d %H:%M:%S')}"
+        f" *Дата:* {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
     try:
         safe_send_message(ADMIN_CHAT_ID, notification, parse_mode="Markdown")
@@ -561,11 +508,6 @@ def send_welcome_internal(message):
     user_name = message.from_user.first_name or "Партнер"
     username = message.from_user.username or ""
     chat_id = message.chat.id
-    
-    # Отменяем все старые задачи для пользователя
-    if scheduler:
-        scheduler.cancel_all_user_jobs(user_id)
-        logger.info(f"✅ Отменены старые задачи для {user_id}")
     
     # Создаем или обновляем пользователя
     create_or_update_user(user_id, username, user_name, "START_FUNNEL", "initial", chat_id=chat_id)
@@ -939,9 +881,7 @@ def handle_message(message):
     
     # КЕЙСЫ
     if any(word in text for word in ["кейс", "deu", "agent", "разбор", "case"]):
-        if scheduler:
-            # Сначала шлем message_5 (вводное сообщение перед файлом), а из него уже кнопка на файл
-            scheduler.send_message_direct(user_id, chat_id, "message_5")
+        send_case_file(user_id, chat_id)
         return
 
     # МАТЕРИАЛЫ И ЧЕК-ЛИСТ
