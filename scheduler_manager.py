@@ -133,6 +133,24 @@ class FollowUpScheduler:
                 if attempt < max_retries - 1:
                     time.sleep(1)
     
+    def schedule_message_4_followup(self, user_id, chat_id):
+        """Планирует message_file_followup после Checklist (через Таблицу)"""
+        if self.is_stopped(user_id):
+            return
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        run_date = datetime.now(moscow_tz) + timedelta(minutes=60)
+        self.update_sheet_schedule(user_id, "message_file_followup", run_date)
+        logger.info(f"📅 Запланировано message_file_followup для {user_id} через 60 мин")
+
+    def schedule_message_5_followup(self, user_id, chat_id):
+        """Планирует message_5_1 после Case Study (через Таблицу)"""
+        if self.is_stopped(user_id):
+            return
+        moscow_tz = pytz.timezone('Europe/Moscow')
+        run_date = datetime.now(moscow_tz) + timedelta(hours=24)
+        self.update_sheet_schedule(user_id, "message_5_1", run_date)
+        logger.info(f"📅 Запланировано message_5_1 для {user_id} через 24 часа")
+
     def is_stopped(self, user_id):
         return self.user_stop_flags.get(user_id, False)
     
