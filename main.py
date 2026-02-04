@@ -19,8 +19,6 @@ from datetime import datetime, timedelta
 from flask import Flask, request
 from dotenv import load_dotenv
 import telebot
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.date import DateTrigger
 import pytz
 from messages import MESSAGES, FOLLOW_UP_PLAN
 from scheduler_manager import FollowUpScheduler
@@ -185,17 +183,7 @@ def check_pending_messages():
     except Exception as e:
         logger.error(f"Ошибка check_pending_messages: {e}")
 
-# Запускаем проверку каждые 5 минут
-scheduler.scheduler.add_job(
-    check_pending_messages,
-    'interval',
-    minutes=5,
-    id='check_pending',
-    replace_existing=True
-)
-
-scheduler.start()
-logger.info("✅ Scheduler для дожимов запущен (Cron-mode)")
+logger.info("✅ Google Sheets Scheduler готов")
 
 # ===== ВАЛИДАЦИЯ =====
 def is_valid_email(email):
