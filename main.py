@@ -18,11 +18,13 @@ import logging
 from datetime import datetime, timedelta
 from flask import Flask, request
 from dotenv import load_dotenv
+import telebot
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 import pytz
 from messages import MESSAGES, FOLLOW_UP_PLAN
 from scheduler_manager import FollowUpScheduler
+from config import TOKEN, WEBHOOK_URL, PORT, GOOGLE_SHEETS_ID
 
 # Попытка импортировать gspread (опционально)
 try:
@@ -44,10 +46,7 @@ VERSION = "V9.1-UTC3-FIX"
 logger.info(f"--- BOT RESTARTED: {VERSION} ---")
 
 # ===== КОНФИГУРАЦИЯ =====
-TOKEN = os.getenv("TOKEN")
-GOOGLE_SHEETS_ID = os.getenv(
-    "GOOGLE_SHEETS_ID", "1Rmmb8W-1wD4C5I_zPrH_LFaCOnuQ4ny833iba8sAR_I"
-)
+# TOKEN и GOOGLE_SHEETS_ID уже импортированы из config
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}")
 ZOOM_LINK = os.getenv("ZOOM_LINK", "https://zoom.us/YOUR_ZOOM_LINK")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
@@ -1266,13 +1265,27 @@ def index():
         "\n\nАвтоворонка: Включена"
     )
 
-# ===== ЗАПУСК =====
-if __name__ == "__main__":
-    print("✅ AI2BIZ Bot v8.0 Autofunnel запущен.")
-    if not GSPREAD_AVAILABLE:
-        print("⚠️ gspread не установлен. Добавьте в requirements.txt и выполните redeploy.")
-    if scheduler:
-        print("✅ Scheduler для дожимов активен")
-    else:
-        print("⚠️ Scheduler не инициализирован")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+# ... все импорты и код до main() без изменений
+
+def main():
+    """Инициализация бота перед запуском сервера."""
+    try:
+        # Установка Webhook
+        if WEBHOOK_URL:
+            webhook_full_url = f"{WEBHOOK_URL}/telegram-webhook"
+            bot.remove_webhook()
+            bot.set_webhook(url=webhook_full_url)
+            logger.info(f"✅ Webhook установлен: {webhook_full_url}")
+        else:
+            logger.warning("⚠️ WEBHOOK_URL не установлен в переменных окружения")
+        
+        logger.info("✅ Bot готов к работе через Webhook")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при запуске бота: {e}")
+
+# Инициализируем бота при импорте модуля (для gunicorn)
+main()
+
+if __name__ == '__main__':
+    # При локальном запуске (без gunicorn)
+    app.run(host="0.0.0.0", port=PORT, debug=False)
