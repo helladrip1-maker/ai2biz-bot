@@ -22,7 +22,7 @@ class FollowUpScheduler:
         self.tz = pytz.timezone("Europe/Moscow")
         self.use_sheet_queue = bool(self.google_sheets)
         self.custom_follow_up = {
-            "message_file_followup": ("message_5", 24 * 60),
+            "message_file_followup": ("message_5", 23 * 60 + 50),
             "message_5_1": ("message_6", 23 * 60 + 50),
         }
 
