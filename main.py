@@ -372,6 +372,26 @@ def save_form_answers(user_id, answers):
     
     return lead_quality
 
+def get_all_registered_users():
+    """Возвращает список всех зарегистрированных пользователей из таблицы."""
+    if not google_sheets:
+        return []
+    try:
+        worksheet = google_sheets.worksheet("Users")
+        all_records = worksheet.get_all_records()
+        user_ids = []
+        for record in all_records:
+            user_id = record.get("User ID")
+            if user_id:
+                try:
+                    user_ids.append(int(user_id))
+                except ValueError:
+                    user_ids.append(str(user_id))
+        return list(set(user_ids)) # Убираем дубликаты на всякий случай
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения списка пользователей: {e}")
+        return []
+
 def notify_admin_consultation(lead_data):
     """Отправляет уведомление администратору."""
     if ADMIN_CHAT_ID == 0:
@@ -617,7 +637,8 @@ def commands_command(message):
         " */start* – главное меню\n"
         " */help* – помощь и контакты\n"
         " */cancel* – вернуться в меню\n"
-        " */commands* – этот список\n\n"
+        " */commands* – этот список\n"
+        
         "Или просто напиши:\n"
         " *файлы* – получить бесплатные материалы\n"
         " *консультация* – записаться на консультацию"
@@ -625,11 +646,50 @@ def commands_command(message):
     msg = safe_send_message(chat_id, commands_text, parse_mode="Markdown")
     if msg:
         save_message_history(user_id, msg.message_id)
-    if msg:
-        save_message_history(user_id, msg.message_id)
     # send_welcome_internal(message) - убрали, чтобы не спамить START сообщением
     # Лучше показать меню
     send_old_menu(message)
+
+# ===== /BROADCAST_ALL (Admin Only) =====
+@bot.message_handler(commands=["broadcast_all"])
+def broadcast_all_command(message):
+    user_id = message.from_user.id
+    if user_id != ADMIN_CHAT_ID:
+        logger.warning(f"🚫 Попытка доступа к рассылке от пользователя {user_id}")
+        return
+
+    # Получаем сообщение после команды
+    text_parts = message.text.split(maxsplit=1)
+    if len(text_parts) > 1:
+        broadcast_message = text_parts[1]
+        confirm_broadcast(message, broadcast_message)
+    else:
+        msg = bot.send_message(message.chat.id, "📝 Отправьте текст для рассылки всем пользователям:")
+        bot.register_next_step_handler(msg, process_broadcast_input)
+
+def process_broadcast_input(message):
+    if not message.text or message.text.startswith("/"):
+        bot.send_message(message.chat.id, "❌ Рассылка отменена или некорректный текст.")
+        return
+    confirm_broadcast(message, message.text)
+
+def confirm_broadcast(message, text):
+    markup = telebot.types.InlineKeyboardMarkup()
+    markup.add(
+        telebot.types.InlineKeyboardButton("✅ Отправить всем", callback_data="confirm_broadcast"),
+        telebot.types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_broadcast")
+    )
+    # Сохраняем временные данные
+    if message.from_user.id not in user_data:
+        user_data[message.from_user.id] = {}
+    user_data[message.from_user.id]["broadcast_text"] = text
+    
+    bot.send_message(
+        message.chat.id,
+        f"⚠️ *ПОДТВЕРЖДЕНИЕ РАССЫЛКИ*\n\nТекст:\n---\n{text}\n---\n\n*Вы уверены?*",
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
 
 # ===== CALLBACK HANDLERS =====
 @bot.callback_query_handler(func=lambda call: True)
@@ -688,6 +748,38 @@ def handle_callback(call):
         elif callback_data.startswith("answer_"):
             bot.answer_callback_query(call.id)
             handle_form_answer(call, user_id)
+        
+        elif callback_data == "confirm_broadcast":
+            bot.answer_callback_query(call.id, "🚀 Запуск...")
+            broadcast_text = user_data.get(user_id, {}).get("broadcast_text")
+            if not broadcast_text:
+                bot.send_message(chat_id, "❌ Ошибка: текст рассылки не найден.")
+                return
+            
+            # Начинаем рассылку
+            users = get_all_registered_users()
+            bot.edit_message_text(f"⏳ Рассылка запущена для {len(users)} пользователей...", chat_id=chat_id, message_id=call.message.message_id)
+            
+            success_count = 0
+            fail_count = 0
+            for uid in users:
+                try:
+                    bot.send_message(uid, broadcast_text, parse_mode="HTML")
+                    success_count += 1
+                except Exception as e:
+                    logger.warning(f"❌ Ошибка отправки пользователю {uid}: {e}")
+                    fail_count += 1
+            
+            bot.send_message(chat_id, f"🏁 *Рассылка завершена!*\n\n✅ Успешно: {success_count}\n❌ Ошибок: {fail_count}", parse_mode="Markdown")
+            # Очищаем временные данные
+            if user_id in user_data:
+                user_data[user_id].pop("broadcast_text", None)
+
+        elif callback_data == "cancel_broadcast":
+            bot.answer_callback_query(call.id, "Отменено")
+            bot.edit_message_text("❌ Рассылка отменена администратором.", chat_id=chat_id, message_id=call.message.message_id)
+            if user_id in user_data:
+                user_data[user_id].pop("broadcast_text", None)
         
         else:
             bot.answer_callback_query(call.id, "Обрабатываю...")
