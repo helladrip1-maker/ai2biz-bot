@@ -23,7 +23,7 @@ class FollowUpScheduler:
         self.use_sheet_queue = bool(self.google_sheets)
         self.custom_follow_up = {
             "message_file_followup": ("message_5", 24 * 60),
-            "message_5_1": ("message_6", 24 * 60),
+            "message_5_1": ("message_6", 23 * 60 + 50),
         }
 
         if self.use_sheet_queue:
@@ -187,11 +187,11 @@ class FollowUpScheduler:
         # Отменяем стандартный переход к message_5 который был запланирован при отправке message_4
         self.cancel_job(f"funnel_{user_id}_message_5")
 
-        # 1. Через 1 час "Что дальше?" (message_4.2 aka message_file_followup)
-        run_date_1 = datetime.now(self.tz) + timedelta(minutes=60)
+        # 1. Через 10 минут "Что дальше?" (message_4.2 aka message_file_followup)
+        run_date_1 = datetime.now(self.tz) + timedelta(minutes=10)
         job_id_1 = f"file_followup_1_{user_id}"
         
-        logger.info(f"Планирую message_file_followup для {user_id} через 60 мин")
+        logger.info(f"Планирую message_file_followup для {user_id} через 10 мин")
         if self.use_sheet_queue:
             self.update_sheet_schedule(user_id, "message_file_followup", run_date_1, chat_id=chat_id)
             return
@@ -199,17 +199,17 @@ class FollowUpScheduler:
         self.scheduler.add_job(
             self.send_message_job,
             trigger=DateTrigger(run_date=run_date_1),
-            args=[user_id, chat_id, "message_file_followup"],
+            args=[user_id, chat_id, "message_file_followup", False],
             id=job_id_1,
             replace_existing=True
         )
         self.update_sheet_schedule(user_id, "message_file_followup", run_date_1, chat_id=chat_id)
 
-        # 2. Через 24 часа после message 4.2 -> message 5
-        run_date_2 = run_date_1 + timedelta(hours=24)
+        # 2. Через 24 часа после message 4 -> message 5
+        run_date_2 = datetime.now(self.tz) + timedelta(hours=24)
         job_id_2 = f"file_to_msg5_{user_id}"
         
-        logger.info(f"Планирую переход к message_5 для {user_id} через 25 часов")
+        logger.info(f"Планирую переход к message_5 для {user_id} через 24 часа")
         self.scheduler.add_job(
             self.send_message_job,
             trigger=DateTrigger(run_date=run_date_2),
@@ -226,11 +226,11 @@ class FollowUpScheduler:
         # Отменяем стандартный переход к message_6 который был запланирован при отправке message_5
         self.cancel_job(f"funnel_{user_id}_message_6")
 
-        # 1. Через 24 часа "Что дальше?" (message_5.1)
-        run_date_1 = datetime.now(self.tz) + timedelta(hours=24)
+        # 1. Через 10 минут "Что дальше?" (message_5.1)
+        run_date_1 = datetime.now(self.tz) + timedelta(minutes=10)
         job_id_1 = f"case_followup_1_{user_id}"
         
-        logger.info(f"Планирую message_5_1 для {user_id} через 24 часа")
+        logger.info(f"Планирую message_5_1 для {user_id} через 10 минут")
         if self.use_sheet_queue:
             self.update_sheet_schedule(user_id, "message_5_1", run_date_1, chat_id=chat_id)
             return
@@ -238,17 +238,17 @@ class FollowUpScheduler:
         self.scheduler.add_job(
             self.send_message_job,
             trigger=DateTrigger(run_date=run_date_1),
-            args=[user_id, chat_id, "message_5_1"],
+            args=[user_id, chat_id, "message_5_1", False],
             id=job_id_1,
             replace_existing=True
         )
         self.update_sheet_schedule(user_id, "message_5_1", run_date_1, chat_id=chat_id)
 
-        # 2. Через 24 часа после message 5.1 -> message 6
-        run_date_2 = run_date_1 + timedelta(hours=24)
+        # 2. Через 24 часа после message 5 -> message 6
+        run_date_2 = datetime.now(self.tz) + timedelta(hours=24)
         job_id_2 = f"case_to_msg6_{user_id}"
         
-        logger.info(f"Планирую переход к message_6 для {user_id} через 48 часов")
+        logger.info(f"Планирую переход к message_6 для {user_id} через 24 часа")
         self.scheduler.add_job(
             self.send_message_job,
             trigger=DateTrigger(run_date=run_date_2),
@@ -325,14 +325,21 @@ class FollowUpScheduler:
             all_records = worksheet.get_all_records()
             now = datetime.now(self.tz)
 
+            def record_get(record, *keys):
+                for key in keys:
+                    val = record.get(key)
+                    if val is not None and str(val).strip() != "":
+                        return val
+                return ""
+
             for idx, record in enumerate(all_records):
                 user_id_val = record.get("User ID")
                 if not user_id_val:
                     continue
 
-                next_msg = (record.get("Next Scheduled Message") or "").strip()
-                run_date_str = (record.get("Run Date") or "").strip()
-                chat_id_val = record.get("Chat ID") or user_id_val
+                next_msg = str(record_get(record, "Next Scheduled Message", "Next Msg")).strip()
+                run_date_str = str(record_get(record, "Run Date", "Time")).strip()
+                chat_id_val = record_get(record, "Chat ID") or user_id_val
 
                 if not next_msg or not run_date_str:
                     continue

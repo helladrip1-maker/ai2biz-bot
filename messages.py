@@ -250,12 +250,11 @@ MESSAGES = {
 # Ключ: сообщение, ПОСЛЕ которого ставится таймер
 # Значение: (следующее_сообщение, время_в_минутах)
 FOLLOW_UP_PLAN = {
-    "message_0": ("message_1", 10),      # 10 мин
-    "message_1": ("message_2", 20),      # 20 мин (было 30)
-    "message_2": ("message_3", 30),      # 30 мин (было 60)
-    "message_3": ("message_4", 24 * 60), # 24 часа
-    "message_4": ("message_5", 24 * 60), # 24 часа
-    "message_5": ("message_6", 24 * 60), # 24 часа
-    "message_6": ("message_7", 72 * 60), # 72 часа
+    "message_0": ("message_1", 5),        # 5 мин
+    "message_1": ("message_2", 10),       # 10 мин
+    "message_2": ("message_3", 20),       # 20 мин
+    "message_3": ("message_4", 30),       # 30 мин
+    "message_4": ("message_5", 24 * 60),  # 24 часа
+    "message_5": ("message_6", 24 * 60),  # 24 часа
+    "message_6": ("message_7", 48 * 60),  # 48 часов
 }
-

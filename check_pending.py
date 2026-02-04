@@ -96,7 +96,7 @@ def send_message_direct(chat_id, message_key, user_id):
 
 CUSTOM_FOLLOW_UP = {
     "message_file_followup": ("message_5", 24 * 60),
-    "message_5_1": ("message_6", 24 * 60),
+    "message_5_1": ("message_6", 23 * 60 + 50),
 }
 
 def get_next_plan(message_key):
@@ -119,15 +119,22 @@ def check_pending_messages():
         
         processed_count = 0
         
+        def record_get(record, *keys):
+            for key in keys:
+                val = record.get(key)
+                if val is not None and str(val).strip() != "":
+                    return val
+            return ""
+
         for idx, record in enumerate(all_records):
             user_id_val = record.get("User ID")
             if not user_id_val:
                 continue
             
             user_id = str(user_id_val)
-            next_msg = record.get("Next Scheduled Message", "").strip()
-            run_date_str = record.get("Run Date", "").strip()
-            chat_id = record.get("Chat ID") or user_id
+            next_msg = str(record_get(record, "Next Scheduled Message", "Next Msg")).strip()
+            run_date_str = str(record_get(record, "Run Date", "Time")).strip()
+            chat_id = record_get(record, "Chat ID") or user_id
             
             if next_msg and run_date_str:
                 try:
