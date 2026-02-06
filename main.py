@@ -75,7 +75,7 @@ FILE_CHECKLIST = (
 
 FILE_CASE_DEUTSCHER = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Case%20Deutscher%20Agent.pdf"
+    "bot-files/Case%20Deutscher%20Agent.pdf?v=20251227"
 )
 
 
