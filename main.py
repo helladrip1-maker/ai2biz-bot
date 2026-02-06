@@ -1087,9 +1087,9 @@ def handle_message(message):
         user_state[user_id] = "consultation"
         user_data[user_id] = {}
         consultation_text = (
-            "📞 *Отлично, давай запишемся на консультацию*\n\n"
-            "Расскажи немного о себе, и мы подготовимся к нашей встрече.\n\n"
-            " *Как тебя зовут?*"
+            "📞 *Отлично, давайте запишемся на консультацию*\n\n"
+            "Расскажите немного о себе, и мы подготовимся к нашей встрече.\n\n"
+            " *Как вас зовут?*"
         )
         msg = safe_send_message(
             chat_id,
@@ -1210,7 +1210,7 @@ def ask_consultation_name(message, user_id):
         user_state[user_id] = "consultation_name"
         return
     user_data[user_id]["name"] = name
-    duration_text = "⏰ Сколько времени функционирует твой бизнес?"
+    duration_text = "⏰ Сколько времени функционирует ваш бизнес?"
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
     )
@@ -1234,7 +1234,7 @@ def ask_consultation_business_duration(message, user_id):
         scheduler.cancel_consultation_followups(user_id)
 
     user_data[user_id]["business_duration"] = message.text
-    telegram_text = "📱 Твой Telegram (@username) или номер телефона в формате +7-xxx-xxx-xx-xx"
+    telegram_text = "📱 Ваш Telegram (@username) или номер телефона начиная с +7"
     msg = safe_send_message(
         chat_id, telegram_text, reply_markup=telebot.types.ReplyKeyboardRemove()
     )
@@ -1291,7 +1291,7 @@ def ask_consultation_telegram_check(message, user_id):
                     scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_contact")
             user_state[user_id] = "consultation_contact"
     else:
-        error_text = "Некорректный ввод ❌\n\nВведи *@username* или номер телефона с +7"
+        error_text = "Некорректный ввод ❌\n\nВведите *@username* или номер телефона с +7"
         msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
         if msg:
             save_message_history(user_id, msg.message_id)
@@ -1320,7 +1320,7 @@ def ask_consultation_email_check(message, user_id):
         return
     user_data[user_id]["email"] = email
     business_text = (
-        "🏢 Какая ниша у бизнеса, и в чем на твой взгляд проблема в данный момент?"
+        "🏢 Какая ниша у бизнеса, и в чем на ваш взгляд проблема в данный момент?"
     )
     msg = safe_send_message(chat_id, business_text)
     if msg:
@@ -1425,13 +1425,13 @@ def finish_form_consultation(message, user_id):
         f"📧 {app_data.get('email')}\n"
         f"📱 {app_data.get('telegram') or app_data.get('phone')}\n"
         f"🕐 Предпочитаемое время: {app_data.get('zoom_time')}\n\n"
-        "⏳ *Менеджер AI2BIZ свяжется с тобой в течение часа* и согласует точное время встречи.\n\n"
+        "⏳ *Менеджер AI2BIZ свяжется с вами в течение часа* и согласует точное время встречи.\n\n"
         "📍 *На консультации разберем:*\n"
         "• где теряются лиды\n"
         "• конкретный план внедрения автоматизации\n"
         "• сроки внедрения и окупаемость\n\n"
-        "🎯 *Спасибо, что выбрал AI2BIZ!*\n"
-        "Подпишись на канал *@it_ai2biz*, чтобы не пропустить наши кейсы и новости автоматизации 📣"
+        "🎯 *Спасибо, что выбрали AI2BIZ!*\n"
+        "Подпишитесь на канал *@it_ai2biz*, чтобы не пропустить наши кейсы и новости автоматизации 📣"
     )
     msg = safe_send_message(
         chat_id,
