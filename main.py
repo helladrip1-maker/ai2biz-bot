@@ -540,7 +540,6 @@ def send_welcome_internal(message):
     if msg_data:
         text = msg_data.get("text")
         buttons = msg_data.get("buttons")
-        image = msg_data.get("image")
         
         markup = None
         if buttons:
@@ -555,6 +554,7 @@ def send_welcome_internal(message):
                  markup.add(*btns)
         
         try:
+            image = msg_data.get("image")
             if image:
                 msg = bot.send_photo(chat_id, image, caption=text, reply_markup=markup, parse_mode="HTML")
             else:

@@ -134,20 +134,39 @@ class FollowUpScheduler:
                         btns.append(telebot.types.InlineKeyboardButton(text=btn["text"], callback_data=btn["callback_data"]))
                 markup.add(*btns)
 
-        image = msg_data.get("image")
-        images = msg_data.get("images")
-
         try:
-            if image:
-                if len(text) <= 1024:
-                    self.bot.send_photo(chat_id, image, caption=text, reply_markup=markup, parse_mode="HTML")
-                else:
+            # Если есть изображения
+            image = msg_data.get("image")
+            images = msg_data.get("images")
+
+            # Проверяем длину текста для caption (лимит Telegram 1024)
+            caption = text
+            if len(text) > 1024:
+                caption = None
+
+            if images:
+                media = []
+                for i, img_url in enumerate(images):
+                    if i == 0:
+                        media.append(telebot.types.InputMediaPhoto(img_url, caption=caption, parse_mode="HTML"))
+                    else:
+                        media.append(telebot.types.InputMediaPhoto(img_url))
+                self.bot.send_media_group(chat_id, media)
+                
+                # Если текст был слишком длинным или есть кнопки, шлем их следующим сообщением
+                if len(text) > 1024:
+                    self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
+                elif markup:
+                    # Кнопки нельзя прикрепить к медиагруппе
+                    self.bot.send_message(chat_id, "Выберите действие:", reply_markup=markup)
+            
+            elif image:
+                if len(text) > 1024:
                     self.bot.send_photo(chat_id, image)
                     self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
-            elif images:
-                media = [telebot.types.InputMediaPhoto(img_url) for img_url in images]
-                self.bot.send_media_group(chat_id, media)
-                self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
+                else:
+                    self.bot.send_photo(chat_id, image, caption=text, reply_markup=markup, parse_mode="HTML")
+            
             else:
                 self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
 
