@@ -293,6 +293,34 @@ class FollowUpScheduler:
             replace_existing=True
         )
 
+    def schedule_consultation_followup(self, user_id, chat_id, step_key):
+        """Планирует напоминание для анкеты консультации через 5 минут."""
+        run_date = datetime.now(self.tz) + timedelta(minutes=5)
+        job_id = f"consult_followup_{user_id}_{step_key}"
+        
+        # Удаляем предыдущие напоминания для чистоты
+        self.cancel_consultation_followups(user_id)
+        
+        logger.info(f"Планирую напоминание {step_key} для {user_id} через 5 мин")
+        
+        self.scheduler.add_job(
+            self.send_message_job,
+            trigger=DateTrigger(run_date=run_date),
+            args=[user_id, chat_id, step_key, False], # schedule_next=False для напоминаний
+            id=job_id,
+            replace_existing=True
+        )
+
+    def cancel_consultation_followups(self, user_id):
+        """Отменяет все текущие задачи-напоминания для анкеты консультации."""
+        for job in list(self.scheduler.get_jobs()):
+            if job.id.startswith(f"consult_followup_{user_id}"):
+                try:
+                    self.scheduler.remove_job(job.id)
+                    logger.info(f"Удалено напоминание {job.id}")
+                except Exception:
+                    pass
+
     def cancel_job(self, job_id):
         try:
             self.scheduler.remove_job(job_id)

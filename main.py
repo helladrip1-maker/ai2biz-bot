@@ -459,6 +459,8 @@ def reset_user_state(user_id):
     user_data.pop(user_id, None)
     user_state.pop(user_id, None)
     form_answers.pop(user_id, None)
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
 
 def process_cancel_command(message):
     """Обрабатывает команду /cancel."""
@@ -612,7 +614,57 @@ def send_welcome(message):
     log_action(user_id, user_name, "START", "Запуск бота")
     bot.clear_step_handler_by_chat_id(message.chat.id)
     reset_user_state(user_id)
+    
+    # Проверка на deep link
+    text_parts = message.text.split()
+    if len(text_parts) > 1 and text_parts[1] == "consult":
+        start_consultation_direct(message)
+        return
+
     send_welcome_internal(message)
+
+def safe_delete_message(chat_id, message_id):
+    """Безопасно удаляет сообщение, игнорируя ошибки."""
+    try:
+        bot.delete_message(chat_id, message_id)
+    except Exception:
+        pass
+
+def start_consultation_direct(message):
+    """Немедленный запуск процесса записи (deep link)."""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    
+    # Удаляем сообщение пользователя /start consult
+    safe_delete_message(chat_id, message.message_id)
+    
+    # Симуляция удаления: шлем сервисное сообщение и удаляем его
+    temp_msg = bot.send_message(chat_id, "⏳ Подключаю специалиста...")
+    safe_delete_message(chat_id, temp_msg.message_id)
+    
+    update_user_action(user_id, "consultation_requested_deeplink")
+    reset_user_state(user_id)
+    user_state[user_id] = "consultation"
+    user_data[user_id] = {}
+    
+    consultation_text = (
+        "📞 *Отлично, давай запишемся на консультацию*\n\n"
+        "Расскажи немного о себе, и мы подготовимся к нашей встрече.\n\n"
+        " *Как тебя зовут?*"
+    )
+    msg = safe_send_message(
+        chat_id,
+        consultation_text,
+        reply_markup=telebot.types.ReplyKeyboardRemove(),
+        parse_mode="Markdown",
+    )
+    if msg:
+        save_message_history(user_id, msg.message_id)
+        # Планируем напоминание через 5 минут
+        if scheduler:
+            scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_name")
+    
+    bot.register_next_step_handler(msg, ask_consultation_name, user_id)
 
 # ===== /HELP =====
 @bot.message_handler(commands=["help"])
@@ -1141,13 +1193,19 @@ def ask_consultation_name(message, user_id):
     name = (message.text or "").strip()
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
+
+    # Пришел ответ - отменяем дожимы
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
+
     if not is_valid_name(name):
         error_text = "Имя должно быть от 2 до 50 символов"
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
-        if msg:
-            save_message_history(user_id, msg.message_id)
+            # Перепланируем дожим для этого же шага
+            if scheduler:
+                scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_name")
         # Остаемся в том же состоянии если ошибка
         user_state[user_id] = "consultation_name"
         return
@@ -1161,8 +1219,9 @@ def ask_consultation_name(message, user_id):
     msg = safe_send_message(chat_id, duration_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-    if msg:
-        save_message_history(user_id, msg.message_id)
+        # Планируем дожим для следующего шага
+        if scheduler:
+            scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_business_duration")
     user_state[user_id] = "consultation_duration"
 
 def ask_consultation_business_duration(message, user_id):
@@ -1170,6 +1229,10 @@ def ask_consultation_business_duration(message, user_id):
         return
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
+
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
+
     user_data[user_id]["business_duration"] = message.text
     telegram_text = "📱 Твой Telegram (@username) или номер телефона в формате +7-xxx-xxx-xx-xx"
     msg = safe_send_message(
@@ -1177,8 +1240,8 @@ def ask_consultation_business_duration(message, user_id):
     )
     if msg:
         save_message_history(user_id, msg.message_id)
-    if msg:
-        save_message_history(user_id, msg.message_id)
+        if scheduler:
+            scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_contact")
     user_state[user_id] = "consultation_contact"
 
 def ask_consultation_telegram_check(message, user_id):
@@ -1187,6 +1250,9 @@ def ask_consultation_telegram_check(message, user_id):
     contact = (message.text or "").strip()
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
+
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
     
     if contact.startswith("@") or "t.me/" in contact.lower():
         if is_valid_telegram(contact):
@@ -1195,14 +1261,16 @@ def ask_consultation_telegram_check(message, user_id):
             msg = safe_send_message(chat_id, email_text)
             if msg:
                 save_message_history(user_id, msg.message_id)
-            if msg:
-                save_message_history(user_id, msg.message_id)
+                if scheduler:
+                    scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_email")
             user_state[user_id] = "consultation_email"
         else:
             error_text = "Некорректный формат Telegram 📱\n\nИспользуй формат: *@username*"
             msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
             if msg:
                 save_message_history(user_id, msg.message_id)
+                if scheduler:
+                    scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_contact")
             user_state[user_id] = "consultation_contact"
     elif contact.startswith("+7"):
         if is_valid_phone(contact):
@@ -1211,22 +1279,24 @@ def ask_consultation_telegram_check(message, user_id):
             msg = safe_send_message(chat_id, email_text)
             if msg:
                 save_message_history(user_id, msg.message_id)
-            if msg:
-                save_message_history(user_id, msg.message_id)
+                if scheduler:
+                    scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_email")
             user_state[user_id] = "consultation_email"
         else:
             error_text = "Некорректный формат номера ❌\n\nИспользуй +7 и 10 цифр номера"
             msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
             if msg:
                 save_message_history(user_id, msg.message_id)
+                if scheduler:
+                    scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_contact")
             user_state[user_id] = "consultation_contact"
     else:
         error_text = "Некорректный ввод ❌\n\nВведи *@username* или номер телефона с +7"
         msg = safe_send_message(chat_id, error_text, parse_mode="Markdown")
         if msg:
             save_message_history(user_id, msg.message_id)
-        if msg:
-            save_message_history(user_id, msg.message_id)
+            if scheduler:
+                scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_contact")
         user_state[user_id] = "consultation_contact"
 
 def ask_consultation_email_check(message, user_id):
@@ -1235,13 +1305,17 @@ def ask_consultation_email_check(message, user_id):
     email = (message.text or "").strip()
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
+
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
+
     if not is_valid_email(email):
         error_text = "Некорректный Email"
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
-        if msg:
-            save_message_history(user_id, msg.message_id)
+            if scheduler:
+                scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_email")
         user_state[user_id] = "consultation_email"
         return
     user_data[user_id]["email"] = email
@@ -1251,8 +1325,8 @@ def ask_consultation_email_check(message, user_id):
     msg = safe_send_message(chat_id, business_text)
     if msg:
         save_message_history(user_id, msg.message_id)
-    if msg:
-        save_message_history(user_id, msg.message_id)
+        if scheduler:
+            scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_business")
     user_state[user_id] = "consultation_business"
 
 def ask_consultation_business(message, user_id):
@@ -1260,6 +1334,10 @@ def ask_consultation_business(message, user_id):
         return
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
+
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
+
     user_data[user_id]["business"] = (message.text or "").strip()
     revenue_text = "💰 Какая сейчас выручка в месяц?"
     markup = telebot.types.ReplyKeyboardMarkup(
@@ -1270,8 +1348,8 @@ def ask_consultation_business(message, user_id):
     msg = safe_send_message(chat_id, revenue_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-    if msg:
-        save_message_history(user_id, msg.message_id)
+        if scheduler:
+            scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_revenue")
     user_state[user_id] = "consultation_revenue"
 
 def ask_consultation_revenue(message, user_id):
@@ -1279,6 +1357,10 @@ def ask_consultation_revenue(message, user_id):
         return
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
+
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
+
     user_data[user_id]["revenue"] = message.text
     participants_text = "👥 Кто будет на созвоне?"
     markup = telebot.types.ReplyKeyboardMarkup(
@@ -1289,8 +1371,8 @@ def ask_consultation_revenue(message, user_id):
     msg = safe_send_message(chat_id, participants_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-    if msg:
-        save_message_history(user_id, msg.message_id)
+        if scheduler:
+            scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_participants")
     user_state[user_id] = "consultation_participants"
 
 def ask_consultation_participants(message, user_id):
@@ -1298,6 +1380,10 @@ def ask_consultation_participants(message, user_id):
         return
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
+
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
+
     user_data[user_id]["participants"] = message.text
     time_text = "🕐 Когда удобно выйти в Zoom?"
     markup = telebot.types.ReplyKeyboardMarkup(
@@ -1308,8 +1394,8 @@ def ask_consultation_participants(message, user_id):
     msg = safe_send_message(chat_id, time_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
-    if msg:
-        save_message_history(user_id, msg.message_id)
+        if scheduler:
+            scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_time")
     user_state[user_id] = "consultation_time"
 
 def finish_form_consultation(message, user_id):
@@ -1319,13 +1405,15 @@ def finish_form_consultation(message, user_id):
     app_data = user_data[user_id]
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
+
     save_lead_consultation(user_id, app_data)
     update_user_action(user_id, "completed_consultation_form")
     log_action(
         user_id, app_data.get("name"), "FORM_CONSULTATION", "Заявка на консультацию"
     )
-    # Останавливаем воронку
+
     if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
         scheduler.stop_funnel(user_id)
 
     notify_admin_consultation(app_data)
