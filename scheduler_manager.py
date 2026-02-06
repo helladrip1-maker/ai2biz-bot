@@ -175,6 +175,14 @@ class FollowUpScheduler:
             # После отправки, планируем следующее
             if schedule_next:
                 self.schedule_next_message(user_id, chat_id, message_key)
+
+            # Если это было напоминание по консультации ДЛЯ ДИПЛИНК-ЛИДА,
+            # планируем восстановление основной воронки через 10 минут (Message 0)
+            if message_key.startswith("consult_followup_"):
+                 u_data = self.user_data.get(user_id, {})
+                 if u_data.get("entry_source") == "deeplink_consult":
+                     self.schedule_funnel_recovery(user_id, chat_id)
+
             return True
         except Exception as e:
             logger.error(f"Ошибка отправки сообщения воронки {user_id}: {e}")
@@ -320,6 +328,33 @@ class FollowUpScheduler:
                     logger.info(f"Удалено напоминание {job.id}")
                 except Exception:
                     pass
+        # При любой отмене напоминаний - отменяем и восстановление воронки (если юзер ответил)
+        self.cancel_funnel_recovery(user_id)
+
+    def schedule_funnel_recovery(self, user_id, chat_id):
+        """Планирует отправку Message 0 через 10 минут для лидов из диплинка."""
+        run_date = datetime.now(self.tz) + timedelta(minutes=10)
+        job_id = f"funnel_recovery_{user_id}"
+        
+        self.cancel_funnel_recovery(user_id)
+        
+        logger.info(f"Планирую восстановление воронки для {user_id} через 10 мин")
+        self.scheduler.add_job(
+            self.send_message_job,
+            trigger=DateTrigger(run_date=run_date),
+            args=[user_id, chat_id, "message_0", True], # Запускаем цепочку (schedule_next=True)
+            id=job_id,
+            replace_existing=True
+        )
+
+    def cancel_funnel_recovery(self, user_id):
+        """Отменяет задачу восстановления воронки."""
+        job_id = f"funnel_recovery_{user_id}"
+        try:
+            self.scheduler.remove_job(job_id)
+            logger.info(f"Удалено восстановление воронки для {user_id}")
+        except Exception:
+            pass
 
     def cancel_job(self, job_id):
         try:
