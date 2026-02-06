@@ -612,7 +612,7 @@ def send_old_menu(message):
     # Восстанавливаем базовые кнопки
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(
-        telebot.types.InlineKeyboardButton("📚 Файлы", callback_data="subscribed"), # Предполагаем что это ведет к файлам
+        telebot.types.InlineKeyboardButton("📚 Файлы", callback_data="show_file_menu"),
         telebot.types.InlineKeyboardButton("📞 Консультация", callback_data="consultation")
     )
     
@@ -792,6 +792,11 @@ def handle_callback(call):
             # Сразу запускаем воронку Message 4 (Чек-лист)
             if scheduler:
                 scheduler.send_message_direct(user_id, chat_id, "message_4")
+        
+        elif callback_data == "show_file_menu":
+            bot.answer_callback_query(call.id)
+            if scheduler:
+                scheduler.send_message_direct(user_id, chat_id, "message_file_menu", schedule_next=False)
         
         elif callback_data == "consultation":
             bot.answer_callback_query(call.id)
