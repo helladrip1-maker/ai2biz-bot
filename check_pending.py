@@ -16,7 +16,7 @@ import gspread
 # Настройка путей для корректного импорта в Railway
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 try:
-from messages import MESSAGES, FOLLOW_UP_PLAN
+    from messages import MESSAGES, FOLLOW_UP_PLAN
 except ImportError:
     # В Railway корень проекта обычно находится в /app
     sys.path.insert(0, '/app')
@@ -95,8 +95,8 @@ def send_message_direct(chat_id, message_key, user_id):
         return False
 
 CUSTOM_FOLLOW_UP = {
-    "message_file_followup": ("message_5", 24 * 60),
-    "message_5_1": ("message_6", 23 * 60 + 50),
+    "message_file_followup": ("message_5", 23 * 60 + 50),
+    "message_3_1": ("message_4", 10),
 }
 
 def get_next_plan(message_key):

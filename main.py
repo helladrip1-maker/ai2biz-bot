@@ -540,6 +540,7 @@ def send_welcome_internal(message):
     if msg_data:
         text = msg_data.get("text")
         buttons = msg_data.get("buttons")
+        image = msg_data.get("image")
         
         markup = None
         if buttons:
@@ -554,7 +555,11 @@ def send_welcome_internal(message):
                  markup.add(*btns)
         
         try:
-            msg = bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
+            if image:
+                msg = bot.send_photo(chat_id, image, caption=text, reply_markup=markup, parse_mode="HTML")
+            else:
+                msg = bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
+            
             if msg:
                 welcome_message_ids[user_id] = msg.message_id
                 save_message_history(user_id, msg.message_id)
@@ -731,7 +736,7 @@ def handle_callback(call):
         elif callback_data == "examples":
             bot.answer_callback_query(call.id)
             if scheduler:
-                scheduler.send_message_direct(user_id, chat_id, "message_5")
+                scheduler.send_message_direct(user_id, chat_id, "message_3")
         
         elif callback_data == "start_form":
             bot.answer_callback_query(call.id)
@@ -1056,9 +1061,9 @@ def send_case_file(user_id, chat_id):
             
         log_action(user_id, name, "CASE_SENT", "Кейс отправлен")
 
-        # Планируем СЛЕДУЮЩИЕ сообщения (message 5.1 и message 6)
+        # Планируем СЛЕДУЮЩИЕ сообщения (message 3.1 и message 4)
         if scheduler:
-            scheduler.schedule_message_5_followup(user_id, chat_id)
+            scheduler.schedule_message_3_followup(user_id, chat_id)
 
     except Exception as e:
         logger.error(f"Ошибка отправки кейса: {e}")

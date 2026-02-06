@@ -23,7 +23,7 @@ class FollowUpScheduler:
         self.use_sheet_queue = bool(self.google_sheets)
         self.custom_follow_up = {
             "message_file_followup": ("message_5", 23 * 60 + 50),
-            "message_5_1": ("message_6", 23 * 60 + 50),
+            "message_3_1": ("message_4", 10),
         }
 
         if self.use_sheet_queue:
@@ -134,8 +134,23 @@ class FollowUpScheduler:
                         btns.append(telebot.types.InlineKeyboardButton(text=btn["text"], callback_data=btn["callback_data"]))
                 markup.add(*btns)
 
+        image = msg_data.get("image")
+        images = msg_data.get("images")
+
         try:
-            self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
+            if image:
+                if len(text) <= 1024:
+                    self.bot.send_photo(chat_id, image, caption=text, reply_markup=markup, parse_mode="HTML")
+                else:
+                    self.bot.send_photo(chat_id, image)
+                    self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
+            elif images:
+                media = [telebot.types.InputMediaPhoto(img_url) for img_url in images]
+                self.bot.send_media_group(chat_id, media)
+                self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
+            else:
+                self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
+
             self.update_send_log(user_id, message_key, "OK")
             # После отправки, планируем следующее
             if schedule_next:
@@ -218,41 +233,42 @@ class FollowUpScheduler:
             replace_existing=True
         )
 
-    def schedule_message_5_followup(self, user_id, chat_id):
-        """Логика после скачивания Case Study (Message 5)."""
+    def schedule_message_3_followup(self, user_id, chat_id):
+        """Логика после скачивания Case Study (Message 3)."""
         if self.is_stopped(user_id):
             return
 
-        # Отменяем стандартный переход к message_6 который был запланирован при отправке message_5
-        self.cancel_job(f"funnel_{user_id}_message_6")
+        # Отменяем стандартный переход запланированный при отправке message_3
+        self.cancel_job(f"funnel_{user_id}_message_3_1")
+        self.cancel_job(f"funnel_{user_id}_message_4")
 
-        # 1. Через 10 минут "Что дальше?" (message_5.1)
+        # 1. Через 10 минут "Что дальше?" (message_3.1)
         run_date_1 = datetime.now(self.tz) + timedelta(minutes=10)
         job_id_1 = f"case_followup_1_{user_id}"
         
-        logger.info(f"Планирую message_5_1 для {user_id} через 10 минут")
+        logger.info(f"Планирую message_3_1 для {user_id} через 10 минут")
         if self.use_sheet_queue:
-            self.update_sheet_schedule(user_id, "message_5_1", run_date_1, chat_id=chat_id)
+            self.update_sheet_schedule(user_id, "message_3_1", run_date_1, chat_id=chat_id)
             return
 
         self.scheduler.add_job(
             self.send_message_job,
             trigger=DateTrigger(run_date=run_date_1),
-            args=[user_id, chat_id, "message_5_1", False],
+            args=[user_id, chat_id, "message_3_1", False],
             id=job_id_1,
             replace_existing=True
         )
-        self.update_sheet_schedule(user_id, "message_5_1", run_date_1, chat_id=chat_id)
+        self.update_sheet_schedule(user_id, "message_3_1", run_date_1, chat_id=chat_id)
 
-        # 2. Через 24 часа после message 5 -> message 6
+        # 2. Через 24 часа после message 3 -> message 4
         run_date_2 = datetime.now(self.tz) + timedelta(hours=24)
-        job_id_2 = f"case_to_msg6_{user_id}"
+        job_id_2 = f"case_to_msg4_{user_id}"
         
-        logger.info(f"Планирую переход к message_6 для {user_id} через 24 часа")
+        logger.info(f"Планирую переход к message_4 для {user_id} через 24 часа")
         self.scheduler.add_job(
             self.send_message_job,
             trigger=DateTrigger(run_date=run_date_2),
-            args=[user_id, chat_id, "message_6"],
+            args=[user_id, chat_id, "message_4"],
             id=job_id_2,
             replace_existing=True
         )
