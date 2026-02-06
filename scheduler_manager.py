@@ -21,6 +21,7 @@ class FollowUpScheduler:
         self.user_stop_flags = {} # user_id -> True/False
         self.tz = pytz.timezone("Europe/Moscow")
         self.use_sheet_queue = bool(self.google_sheets)
+        self.recovery_callback = None # Коллбэк для восстановления воронки
         self.custom_follow_up = {
             "message_file_followup": ("message_5", 23 * 60 + 50),
             "message_3_1": ("message_4", 10),
@@ -99,42 +100,35 @@ class FollowUpScheduler:
 
     def send_message_job(self, user_id, chat_id, message_key, schedule_next=True):
         """Задача отправки сообщения."""
-        if self.is_stopped(user_id):
-            logger.info(f"Воронка остановлена для {user_id}, пропускаю {message_key}")
-            return False
-
-        logger.info(f"Отправка воронки {message_key} для {user_id}")
-        msg_data = MESSAGES.get(message_key)
-        if not msg_data:
-            return False
-
-        text = msg_data.get("text")
-        buttons = msg_data.get("buttons")
-        
-        # Подставляем имя если оно есть в user_data
-        # user_data = {user_id: {"name": "Ivan", ...}}
-        u_data = self.user_data.get(user_id, {})
-        name = u_data.get("name")
-        
-        # "сделай обращение к тем, кто заполнил анкету по имени"
-        # Просто добавляем имя в начало, если оно известно
-        if name:
-             # Проверяем, не начинается ли текст уже с имени (маловероятно)
-             text = f"{name}, {text}"
-
-        markup = None
-        if buttons:
-            markup = telebot.types.InlineKeyboardMarkup()
-            for row in buttons:
-                btns = []
-                for btn in row:
-                    if "url" in btn:
-                        btns.append(telebot.types.InlineKeyboardButton(text=btn["text"], url=btn["url"]))
-                    else:
-                        btns.append(telebot.types.InlineKeyboardButton(text=btn["text"], callback_data=btn["callback_data"]))
-                markup.add(*btns)
-
         try:
+            logger.info(f"Отправка воронки {message_key} для {user_id}")
+            msg_data = MESSAGES.get(message_key)
+            if not msg_data:
+                return False
+
+            text = msg_data.get("text")
+            buttons = msg_data.get("buttons")
+            
+            # Подставляем имя если оно есть в user_data
+            u_data = self.user_data.get(user_id, {})
+            name = u_data.get("name")
+            
+            if name and "message_" in message_key and message_key != "message_0":
+                 if not text.startswith(name):
+                    text = f"{name}, {text}"
+
+            markup = None
+            if buttons:
+                markup = telebot.types.InlineKeyboardMarkup()
+                for row in buttons:
+                    btns = []
+                    for btn in row:
+                        if "url" in btn:
+                            btns.append(telebot.types.InlineKeyboardButton(text=btn["text"], url=btn["url"]))
+                        else:
+                            btns.append(telebot.types.InlineKeyboardButton(text=btn["text"], callback_data=btn["callback_data"]))
+                    markup.add(*btns)
+
             # Если есть изображения
             image = msg_data.get("image")
             images = msg_data.get("images")
@@ -153,11 +147,9 @@ class FollowUpScheduler:
                         media.append(telebot.types.InputMediaPhoto(img_url))
                 self.bot.send_media_group(chat_id, media)
                 
-                # Если текст был слишком длинным или есть кнопки, шлем их следующим сообщением
                 if len(text) > 1024:
                     self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
                 elif markup:
-                    # Кнопки нельзя прикрепить к медиагруппе
                     footer = msg_data.get("footer", "Выберите действие:")
                     self.bot.send_message(chat_id, footer, reply_markup=markup, parse_mode="HTML")
             
@@ -200,6 +192,12 @@ class FollowUpScheduler:
 
     def is_stopped(self, user_id):
         return self.user_stop_flags.get(user_id, False)
+
+    def resume_funnel(self, user_id):
+        """Снимает флаг остановки воронки для пользователя."""
+        if user_id in self.user_stop_flags:
+            self.user_stop_flags[user_id] = False
+            logger.info(f"Воронка возобновлена для {user_id}")
 
     def mark_user_action(self, user_id, action):
         """Отмечает действие пользователя и отменяет запланированные дожимы при важных действиях."""
@@ -339,13 +337,25 @@ class FollowUpScheduler:
         self.cancel_funnel_recovery(user_id)
         
         logger.info(f"Планирую восстановление воронки для {user_id} через 10 мин")
-        self.scheduler.add_job(
-            self.send_message_job,
-            trigger=DateTrigger(run_date=run_date),
-            args=[user_id, chat_id, "message_0", True], # Запускаем цепочку (schedule_next=True)
-            id=job_id,
-            replace_existing=True
-        )
+        
+        if self.recovery_callback:
+            # Если есть коллбэк (из main.py), планируем вызов коллбэка
+            self.scheduler.add_job(
+                self.recovery_callback,
+                trigger=DateTrigger(run_date=run_date),
+                args=[user_id, chat_id],
+                id=job_id,
+                replace_existing=True
+            )
+        else:
+            # Иначе просто отправляем сообщение (старый способ)
+            self.scheduler.add_job(
+                self.send_message_job,
+                trigger=DateTrigger(run_date=run_date),
+                args=[user_id, chat_id, "message_0", True], 
+                id=job_id,
+                replace_existing=True
+            )
 
     def cancel_funnel_recovery(self, user_id):
         """Отменяет задачу восстановления воронки."""

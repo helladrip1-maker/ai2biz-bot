@@ -461,6 +461,7 @@ def reset_user_state(user_id):
     form_answers.pop(user_id, None)
     if scheduler:
         scheduler.cancel_consultation_followups(user_id)
+        scheduler.resume_funnel(user_id)
 
 def process_cancel_command(message):
     """Обрабатывает команду /cancel."""
@@ -541,7 +542,8 @@ def send_welcome_internal(message):
     username = message.from_user.username or ""
     chat_id = message.chat.id
     
-    # Создаем или обновляем пользователя
+    # Всегда сбрасываем состояние при старте/перезапуске
+    reset_user_state(user_id)
     create_or_update_user(user_id, username, user_name, "START_FUNNEL", "initial", chat_id=chat_id)
     
     # Отправляем Message 0
@@ -581,6 +583,19 @@ def send_welcome_internal(message):
     # Запланировать следующий шаг (message_1 через 10 минут)
     if scheduler:
         scheduler.schedule_next_message(user_id, chat_id, "message_0")
+
+def recovery_handler(user_id, chat_id):
+    """Обработчик восстановления воронки для диплинк-лидов."""
+    logger.info(f"Запуск восстановления воронки для {user_id}")
+    
+    # Создаем фиктивное сообщение для совместимости с send_welcome_internal
+    class MockMessage:
+        def __init__(self, uid, cid):
+            self.from_user = type('User', (), {'id': uid, 'first_name': 'Партнер', 'username': ''})
+            self.chat = type('Chat', (), {'id': cid})
+    
+    msg = MockMessage(user_id, chat_id)
+    send_welcome_internal(msg)
 
 def send_old_menu(message):
     """Отправляет старое меню (приветствие)."""
@@ -1464,6 +1479,7 @@ if __name__ == "__main__":
         print("⚠️ gspread не установлен. Добавьте в requirements.txt и выполните redeploy.")
     if scheduler:
         print("✅ Scheduler для дожимов активен")
+        scheduler.recovery_callback = recovery_handler
     else:
         print("⚠️ Scheduler не инициализирован")
     app.run(host="0.0.0.0", port=5000, debug=False)
