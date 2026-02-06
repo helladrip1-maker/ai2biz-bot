@@ -78,6 +78,16 @@ FILE_CASE_DEUTSCHER = (
     "bot-files/Case%20Deutscher%20Agent.pdf?v=20251227"
 )
 
+FILE_AVTOVORONKI = (
+    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
+    "bot-files/Avtovoronki%20AI2BIZ.pdf?v=20251227"
+)
+
+FILE_AI = (
+    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
+    "bot-files/AI%20for%20Business%20AI2BIZ.pdf?v=20251227"
+)
+
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
@@ -736,7 +746,8 @@ def handle_callback(call):
         elif callback_data == "examples":
             bot.answer_callback_query(call.id)
             if scheduler:
-                scheduler.send_message_direct(user_id, chat_id, "message_3")
+                # Используем send_message_job(..., schedule_next=False), чтобы не прерывать воронку
+                scheduler.send_message_job(user_id, chat_id, "message_3", schedule_next=False)
         
         elif callback_data == "start_form":
             bot.answer_callback_query(call.id)
@@ -749,6 +760,14 @@ def handle_callback(call):
         elif callback_data == "get_case_file":
             bot.answer_callback_query(call.id)
             send_case_file(user_id, chat_id)
+        
+        elif callback_data == "get_avto_file":
+            bot.answer_callback_query(call.id)
+            send_avtovoronki_file(user_id, chat_id)
+
+        elif callback_data == "get_ai_file":
+            bot.answer_callback_query(call.id)
+            send_ai_file(user_id, chat_id)
         
         elif callback_data.startswith("answer_"):
             bot.answer_callback_query(call.id)
@@ -979,16 +998,26 @@ def handle_message(message):
     # КЕЙСЫ
     if any(word in text for word in ["кейс", "deu", "agent", "разбор", "case"]):
         if scheduler:
-            scheduler.send_message_direct(user_id, chat_id, "message_3")
+            # Используем send_message_job(..., schedule_next=False), чтобы не прерывать воронку
+            scheduler.send_message_job(user_id, chat_id, "message_3", schedule_next=False)
         else:
             send_case_file(user_id, chat_id)
         return
 
-    # МАТЕРИАЛЫ И ЧЕК-ЛИСТ
-    if any(word in text for word in ["чек", "10", "десять", "материал", "файлы", "pdf"]):
+    # МАТЕРИАЛЫ И ЧЕК-ЛИСТ (Message 4)
+    # Только по конкретным ключам: чек, чек-лист, чеклист, 10, десять, ошиб
+    if any(word in text for word in ["чек", "10", "десять", "ошиб"]):
         if scheduler:
-            # Отменяем текущие задачи и шлем message_4
-            scheduler.send_message_direct(user_id, chat_id, "message_4")
+            # Не прерываем воронку
+            scheduler.send_message_job(user_id, chat_id, "message_4", schedule_next=False)
+        return
+
+    # МЕНЮ ВЫБОРА ГАЙДОВ (Дополнительные материалы)
+    # По словам: гайд, файл, кп, воронка, ИИ, автоматизация, ai
+    if any(word in text for word in ["гайд", "файл", "кп", "воронк", "ии", "автоматизация", "ai"]):
+        if scheduler:
+            # Не прерываем воронку
+            scheduler.send_message_job(user_id, chat_id, "message_file_menu", schedule_next=False)
         return
 
 
@@ -1071,6 +1100,38 @@ def send_case_file(user_id, chat_id):
     except Exception as e:
         logger.error(f"Ошибка отправки кейса: {e}")
         safe_send_message(chat_id, "Ошибка при отправке кейса. Попробуй позже.")
+
+def send_avtovoronki_file(user_id, chat_id):
+    """Отправляет PDF по автоворонкам."""
+    u_data = user_data.get(user_id, {})
+    name = u_data.get("name", "User")
+    log_action(user_id, name, "AVTOVORONKI_REQUESTED", "Запросил гайд по автоворонкам")
+
+    try:
+        caption = MESSAGES.get("message_file_avtovoronki", {}).get("text", "Ваш гайд по автоворонкам 📂")
+        doc_msg = bot.send_document(chat_id, FILE_AVTOVORONKI, caption=caption, parse_mode="HTML")
+        if doc_msg:
+            save_message_history(user_id, doc_msg.message_id)
+        log_action(user_id, name, "AVTOVORONKI_SENT", "Гайд по автоворонкам отправлен")
+    except Exception as e:
+        logger.error(f"Ошибка отправки файла автоворонок: {e}")
+        safe_send_message(chat_id, "Ошибка при отправке файла. Попробуй позже.")
+
+def send_ai_file(user_id, chat_id):
+    """Отправляет PDF по ИИ."""
+    u_data = user_data.get(user_id, {})
+    name = u_data.get("name", "User")
+    log_action(user_id, name, "AI_GUIDE_REQUESTED", "Запросил гайд по ИИ")
+
+    try:
+        caption = MESSAGES.get("message_file_ai", {}).get("text", "Ваш гайд по ИИ 🤖")
+        doc_msg = bot.send_document(chat_id, FILE_AI, caption=caption, parse_mode="HTML")
+        if doc_msg:
+            save_message_history(user_id, doc_msg.message_id)
+        log_action(user_id, name, "AI_GUIDE_SENT", "Гайд по ИИ отправлен")
+    except Exception as e:
+        logger.error(f"Ошибка отправки файла ИИ: {e}")
+        safe_send_message(chat_id, "Ошибка при отправке файла. Попробуй позже.")
 
 # ===== ЦЕПОЧКА: КОНСУЛЬТАЦИЯ =====
 def ask_consultation_name(message, user_id):
