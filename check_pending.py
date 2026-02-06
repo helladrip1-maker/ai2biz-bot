@@ -110,7 +110,8 @@ def send_message_direct(chat_id, message_key, user_id):
                 bot.send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
             elif markup:
                 # Кнопки нельзя прикрепить к медиагруппе
-                bot.send_message(chat_id, "Выберите действие:", reply_markup=markup)
+                footer = msg_data.get("footer", "Выберите действие:")
+                bot.send_message(chat_id, footer, reply_markup=markup, parse_mode="HTML")
         
         elif image:
             if len(text) > 1024:
