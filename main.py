@@ -978,7 +978,10 @@ def handle_message(message):
     
     # КЕЙСЫ
     if any(word in text for word in ["кейс", "deu", "agent", "разбор", "case"]):
-        send_case_file(user_id, chat_id)
+        if scheduler:
+            scheduler.send_message_direct(user_id, chat_id, "message_3")
+        else:
+            send_case_file(user_id, chat_id)
         return
 
     # МАТЕРИАЛЫ И ЧЕК-ЛИСТ
