@@ -183,10 +183,19 @@ def is_valid_phone(phone):
     digits_only = re.sub(r"\D", "", phone[2:])
     return len(digits_only) == 10 and digits_only.isdigit()
 
+def contains_letters(text):
+    """Проверяет, содержит ли текст хотя бы одну букву (латиница или кириллица)."""
+    return bool(re.search(r'[a-zA-Zа-яА-ЯёЁ]', text))
+
 def is_valid_name(name):
     """Проверяет валидность имени."""
     name = name.strip()
-    return 2 <= len(name) <= 50
+    return 2 <= len(name) <= 50 and contains_letters(name)
+
+def is_valid_business(text):
+    """Проверяет валидность поля ниши/проблем (минимум 10 символов + буквы)."""
+    text = text.strip()
+    return len(text) >= 10 and contains_letters(text)
 
 def safe_send_message(chat_id, text, **kwargs):
     """Безопасно отправляет сообщение."""
@@ -454,14 +463,15 @@ def delete_messages_after_welcome(chat_id, user_id):
             pass
     user_message_history[user_id] = [welcome_msg_id]
 
-def reset_user_state(user_id):
+def reset_user_state(user_id, resume=True):
     """Очищает состояние пользователя."""
     user_data.pop(user_id, None)
     user_state.pop(user_id, None)
     form_answers.pop(user_id, None)
     if scheduler:
         scheduler.cancel_consultation_followups(user_id)
-        scheduler.resume_funnel(user_id)
+        if resume:
+            scheduler.resume_funnel(user_id)
 
 def process_cancel_command(message):
     """Обрабатывает команду /cancel."""
@@ -991,7 +1001,8 @@ def finish_diagnostic_form(chat_id, user_id, message_id):
     )
     safe_send_message(chat_id, "Хотите записаться на консультацию?", reply_markup=markup)
     
-    reset_user_state(user_id)
+    # Сбрасываем состояние, НО НЕ ВОЗОБНОВЛЯЕМ ВОРОНКУ (т.к. анкету заполнили)
+    reset_user_state(user_id, resume=False)
 
 def send_checklist_file(user_id, chat_id):
     """Отправляет PDF чек-лист и планирует следующие сообщения."""
@@ -1221,15 +1232,19 @@ def ask_consultation_name(message, user_id):
         scheduler.cancel_consultation_followups(user_id)
 
     if not is_valid_name(name):
-        error_text = "Имя должно быть от 2 до 50 символов"
+        if len(name) < 2:
+            error_text = "Имя должно быть не короче 2 символов"
+        elif not contains_letters(name):
+            error_text = "Имя должно содержать буквы, а не только цифры или символы 👤"
+        else:
+            error_text = "Имя слишком длинное (макс. 50 символов)"
+            
         msg = safe_send_message(chat_id, error_text)
         if msg:
             save_message_history(user_id, msg.message_id)
-            # Перепланируем дожим для этого же шага
             if scheduler:
                 scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_name")
-        # Остаемся в том же состоянии если ошибка
-        user_state[user_id] = "consultation_name"
+        bot.register_next_step_handler(message, ask_consultation_name, user_id)
         return
     user_data[user_id]["name"] = name
     duration_text = "⏰ Сколько времени функционирует ваш бизнес?"
@@ -1357,10 +1372,22 @@ def ask_consultation_business(message, user_id):
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
 
-    if scheduler:
-        scheduler.cancel_consultation_followups(user_id)
+    business_desc = (message.text or "").strip()
+    if not is_valid_business(business_desc):
+        if len(business_desc) < 10:
+            error_text = "Пожалуйста, опишите нишу и проблему чуть подробнее (минимум 10 символов) ✍️"
+        else:
+            error_text = "Ваш ответ должен содержать текст (буквы), а не только символы или эмодзи."
+            
+        msg = safe_send_message(chat_id, error_text)
+        if msg:
+            save_message_history(user_id, msg.message_id)
+            if scheduler:
+                scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_business")
+        bot.register_next_step_handler(message, ask_consultation_business, user_id)
+        return
 
-    user_data[user_id]["business"] = (message.text or "").strip()
+    user_data[user_id]["business"] = business_desc
     revenue_text = "💰 Какая сейчас выручка в месяц?"
     markup = telebot.types.ReplyKeyboardMarkup(
         resize_keyboard=True, one_time_keyboard=True
@@ -1465,7 +1492,8 @@ def finish_form_consultation(message, user_id):
         save_message_history(user_id, msg.message_id)
 
     # Сбрасываем состояние
-    reset_user_state(user_id)
+    # Сбрасываем состояние, НО НЕ ВОЗОБНОВЛЯЕМ ВОРОНКУ (т.к. анкету заполнили)
+    reset_user_state(user_id, resume=False)
 
 # ===== ГЛАВНАЯ СТРАНИЦА =====
 @app.route("/")

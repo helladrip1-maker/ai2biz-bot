@@ -301,8 +301,7 @@ FOLLOW_UP_PLAN = {
     "message_0": ("message_1", 5),        # 5 мин
     "message_1": ("message_2", 10),       # 10 мин
     "message_2": ("message_3", 30),       # 30 мин
-    "message_3": ("message_3_1", 10),     # 10 мин
-    "message_3_1": ("message_4", 10),     # 10 мин (всего 30+10+10=50 от M2, как и было раньше)
+    "message_3": ("message_4", 60),       # 60 мин (через час если не нажал)
     "message_4": ("message_5", 24 * 60),  # 24 часа
     "message_5": ("message_6", 24 * 60),  # 24 часа
     "message_6": ("message_7", 24 * 60),  # 24 час

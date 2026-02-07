@@ -24,7 +24,7 @@ class FollowUpScheduler:
         self.recovery_callback = None # Коллбэк для восстановления воронки
         self.custom_follow_up = {
             "message_file_followup": ("message_5", 23 * 60 + 50),
-            "message_3_1": ("message_4", 10),
+            "message_3_1": ("message_4", 23 * 60 + 50),
         }
 
         if self.use_sheet_queue:
@@ -48,7 +48,7 @@ class FollowUpScheduler:
         if self.is_stopped(user_id):
             return
 
-        plan = FOLLOW_UP_PLAN.get(last_message_key)
+        plan = self.get_next_plan(last_message_key)
         if not plan:
             logger.info(f"Конец воронки для {user_id} после {last_message_key}")
             return
@@ -93,8 +93,10 @@ class FollowUpScheduler:
         if self.is_stopped(user_id):
             return
         
-        # Отменяем текущую очередь чтобы начать новую
-        self.cancel_all_user_jobs(user_id)
+        # Отменяем текущую очередь только если мы планируем НОВУЮ цепочку (schedule_next=True)
+        # Если мы просто шлем доп. сообщение (например меню файлов), старая очередь должна жить
+        if schedule_next:
+            self.cancel_all_user_jobs(user_id)
         
         self.send_message_job(user_id, chat_id, message_key, schedule_next=schedule_next)
 
@@ -200,25 +202,23 @@ class FollowUpScheduler:
             logger.info(f"Воронка возобновлена для {user_id}")
 
     def mark_user_action(self, user_id, action):
-        """Отмечает действие пользователя и отменяет запланированные дожимы при важных действиях."""
+        """Отмечает действие пользователя. Отменяет воронку только при полном заполнении анкет/заявок."""
         logger.info(f"Пользователь {user_id} совершил действие: {action}")
         
-        # Если пользователь совершил важное действие - останавливаем автоворонку
-        important_actions = [
-            "consultation",
+        # Список действий, КУДА МЫ УХОДИМ ИЗ ВОРОНКИ НАВСЕГДА (или до ручного перезапуска)
+        # Теперь это только завершенные формы
+        stop_actions = [
             "completed_consultation_form",
-            "requested_files",
-            "subscribed",
-            "consultation_requested"
+            "completed_form"
         ]
         
-        if action in important_actions:
-            # Не останавливаем полностью, но отменяем текущие запланированные дожимы
-            # поскольку пользователь уже активен
-            logger.info(f"Пользователь {user_id} активен ({action}), отменяем текущие дожимы")
-            # Можно отменить все задачи для этого пользователя
-            # Но мы оставляем файловую логику работать
-            self.cancel_all_user_jobs(user_id)
+        if action in stop_actions:
+            logger.info(f"Пользователь {user_id} завершил квалификацию ({action}), останавливаем дожимы")
+            self.stop_funnel(user_id)
+        else:
+            # Для всех остальных действий (скачивание файлов, кнопки меню, начало анкеты)
+            # мы НЕ отменяем воронку, чтобы дожимы продолжали приходить если пользователь не закончил.
+            logger.info(f"Пользователь {user_id} активен ({action}), воронка продолжается")
 
     def schedule_message_4_followup(self, user_id, chat_id):
         """Логика после скачивания Checklist (Message 4)."""
@@ -228,7 +228,7 @@ class FollowUpScheduler:
         # Отменяем стандартный переход к message_5 который был запланирован при отправке message_4
         self.cancel_job(f"funnel_{user_id}_message_5")
 
-        # 1. Через 10 минут "Что дальше?" (message_4.2 aka message_file_followup)
+        # 1. Через 10 минут "Что дальше?" (message_file_followup)
         run_date_1 = datetime.now(self.tz) + timedelta(minutes=10)
         job_id_1 = f"file_followup_1_{user_id}"
         
@@ -240,35 +240,21 @@ class FollowUpScheduler:
         self.scheduler.add_job(
             self.send_message_job,
             trigger=DateTrigger(run_date=run_date_1),
-            args=[user_id, chat_id, "message_file_followup", False],
+            args=[user_id, chat_id, "message_file_followup", True], # Используем автоматику
             id=job_id_1,
             replace_existing=True
         )
         self.update_sheet_schedule(user_id, "message_file_followup", run_date_1, chat_id=chat_id)
-
-        # 2. Через 24 часа после message 4 -> message 5
-        run_date_2 = datetime.now(self.tz) + timedelta(hours=24)
-        job_id_2 = f"file_to_msg5_{user_id}"
-        
-        logger.info(f"Планирую переход к message_5 для {user_id} через 24 часа")
-        self.scheduler.add_job(
-            self.send_message_job,
-            trigger=DateTrigger(run_date=run_date_2),
-            args=[user_id, chat_id, "message_5"],
-            id=job_id_2,
-            replace_existing=True
-        )
 
     def schedule_message_3_followup(self, user_id, chat_id):
         """Логика после скачивания Case Study (Message 3)."""
         if self.is_stopped(user_id):
             return
 
-        # Отменяем стандартный переход запланированный при отправке message_3
-        self.cancel_job(f"funnel_{user_id}_message_3_1")
+        # Отменяем стандартный переход запланированный при отправке message_3 (к message_4 через час)
         self.cancel_job(f"funnel_{user_id}_message_4")
 
-        # 1. Через 10 минут "Что дальше?" (message_3.1)
+        # 1. Через 10 минут "Что дальше?" (message_3_1)
         run_date_1 = datetime.now(self.tz) + timedelta(minutes=10)
         job_id_1 = f"case_followup_1_{user_id}"
         
@@ -280,24 +266,15 @@ class FollowUpScheduler:
         self.scheduler.add_job(
             self.send_message_job,
             trigger=DateTrigger(run_date=run_date_1),
-            args=[user_id, chat_id, "message_3_1", False],
+            args=[user_id, chat_id, "message_3_1", True], # Пусть планирует следующее через get_next_plan
             id=job_id_1,
             replace_existing=True
         )
         self.update_sheet_schedule(user_id, "message_3_1", run_date_1, chat_id=chat_id)
 
-        # 2. Через 24 часа после message 3 -> message 4
-        run_date_2 = datetime.now(self.tz) + timedelta(hours=24)
-        job_id_2 = f"case_to_msg4_{user_id}"
-        
-        logger.info(f"Планирую переход к message_4 для {user_id} через 24 часа")
-        self.scheduler.add_job(
-            self.send_message_job,
-            trigger=DateTrigger(run_date=run_date_2),
-            args=[user_id, chat_id, "message_4"],
-            id=job_id_2,
-            replace_existing=True
-        )
+        # Мы не планируем здесь message_4 вручную для локального шедулера,
+        # так как send_message_job("message_3_1", schedule_next=True) теперь будет
+        # использовать get_next_plan и запланирует его автоматически.
 
     def schedule_consultation_followup(self, user_id, chat_id, step_key):
         """Планирует напоминание для анкеты консультации через 5 минут."""
