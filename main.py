@@ -589,6 +589,9 @@ def check_for_commands(message):
     if text == "/help":
         process_help_command(message)
         return True
+    if text == "/refresh_files":
+        process_refresh_files_command(message)
+        return True
     return False
 
 def build_inline_keyboard(buttons_config):
