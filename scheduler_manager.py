@@ -713,24 +713,15 @@ class FollowUpScheduler:
             cell = worksheet.find(str(user_id), in_column=1)
             if cell:
                 row = cell.row
-                # Получаем chat_id
-                chat_id_val = worksheet.cell(row, 12).value
-                chat_id = int(chat_id_val) if chat_id_val else user_id
+                
+                # Проверяем, была ли форма вообще активна
+                consult_state = worksheet.cell(row, self.consult_state_col).value
+                form_was_active = consult_state and consult_state.strip() != ""
                 
                 # Очищаем состояние формы
                 worksheet.update_cell(row, self.consult_state_col, "")
-                logger.info(f"✅ Форма консультации закрыта для {user_id}")
-                
-                # Удаляем reply-клавиатуру
-                try:
-                    import telebot
-                    self.bot.send_message(
-                        chat_id, 
-                        "⏸ Анкета консультации закрыта. Продолжаем основную цепочку сообщений.",
-                        reply_markup=telebot.types.ReplyKeyboardRemove()
-                    )
-                except Exception as e:
-                    logger.error(f"❌ Ошибка удаления клавиатуры для {user_id}: {e}")
+                logger.info(f"✅ Форма консультации закрыта для {user_id} (была активна: {form_was_active})")
+                # Reply-клавиатура автоматически исчезнет при следующем сообщении без клавиатуры
                 
                 # Очищаем данные формы в памяти
                 if user_id in self.user_data:
