@@ -69,21 +69,21 @@ FILE_5_MISTAKES = (
     "bot-files/5%20mistakes%20of%20managers.pdf?v=20251227"
 )
 FILE_CHECKLIST = (
-    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Check-list%20AI2BIZ.pdf"
+    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Check-list%20AI2BIZ.pdf?v=20260209"
 )
 
 FILE_CASE_DEUTSCHER = (
-    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/%20Case%20Deutscher%20Agent%20AI2BIZ.pdf"
+    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/%20Case%20Deutscher%20Agent%20AI2BIZ.pdf?v=20260209"
 )
 
 FILE_AVTOVORONKI = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Avtovoronki%20AI2BIZ.pdf?v=20251227"
+    "bot-files/Avtovoronki%20AI2BIZ.pdf?v=20260209"
 )
 
 FILE_AI = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/AI%20for%20Business%20AI2BIZ.pdf?v=20251227"
+    "bot-files/AI%20for%20Business%20AI2BIZ.pdf?v=20260209"
 )
 
 
