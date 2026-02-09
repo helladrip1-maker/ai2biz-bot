@@ -174,7 +174,28 @@ class FollowUpScheduler:
             # планируем восстановление основной воронки через 10 минут (Message 0)
             if message_key.startswith("consult_followup_"):
                  u_data = self.user_data.get(user_id, {})
-                 if u_data.get("entry_source") == "deeplink_consult":
+                 
+                 is_deeplink = u_data.get("entry_source") == "deeplink_consult"
+                 
+                 # Фолбек: проверяем Google Sheets, если в памяти нет флага (после рестарта)
+                 if not is_deeplink and self.use_sheet_queue:
+                     try:
+                         worksheet = self.google_sheets.worksheet("Users")
+                         cell = worksheet.find(str(user_id), in_column=1)
+                         if cell:
+                             # Колонка 7 (G) - Lead Source
+                             lead_source_val = worksheet.cell(cell.row, 7).value
+                             if lead_source_val == "deeplink":
+                                 is_deeplink = True
+                                 # Восстанавливаем в память
+                                 if user_id not in self.user_data:
+                                     self.user_data[user_id] = {}
+                                 self.user_data[user_id]["entry_source"] = "deeplink_consult"
+                                 logger.info(f"Restored deeplink status for {user_id} from Sheets")
+                     except Exception as e:
+                         logger.error(f"Error checking deep link status in sheet for {user_id}: {e}")
+
+                 if is_deeplink:
                      self.schedule_funnel_recovery(user_id, chat_id)
 
             return True

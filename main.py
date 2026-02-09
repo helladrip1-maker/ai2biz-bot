@@ -226,7 +226,7 @@ def save_to_google_sheets(sheet_name, row_data):
         logger.error(f"❌ Ошибка сохранения: {e}")
         return False
 
-def create_or_update_user(user_id, username, first_name, action="", state="", chat_id=None):
+def create_or_update_user(user_id, username, first_name, action="", state="", chat_id=None, lead_source=None):
     """Создает или обновляет запись пользователя в Google Sheets."""
     if not google_sheets:
         return False
@@ -248,6 +248,8 @@ def create_or_update_user(user_id, username, first_name, action="", state="", ch
                 worksheet.update_cell(row, 5, action)  # Last Action
             if state:
                 worksheet.update_cell(row, 6, state)  # State
+            if lead_source:
+                worksheet.update_cell(row, 7, lead_source)  # Lead Source (Column G)
             if chat_id is not None:
                 worksheet.update_cell(row, 12, str(chat_id))  # Chat ID
             logger.info(f"✅ Обновлена запись пользователя {user_id}")
@@ -258,6 +260,9 @@ def create_or_update_user(user_id, username, first_name, action="", state="", ch
                 username or "",
                 first_name or "",
                 timestamp,
+                action,
+                state,
+                lead_source or "",  # Lead Source
                 action or "",
                 state or "initial",
                 "",  # Lead Quality
@@ -669,6 +674,11 @@ def start_consultation_direct(message):
     update_user_action(user_id, "consultation_requested_deeplink")
     reset_user_state(user_id)
     
+    # Сохраняем источник входа в Google Sheets (Column G - Lead) для восстановления после перезапуска
+    username = message.from_user.username or ""
+    first_name = message.from_user.first_name or "Гость"
+    create_or_update_user(user_id, username, first_name, action="consultation_requested_deeplink", state="consultation", chat_id=chat_id, lead_source="deeplink")
+
     # Ставим метку ПОСЛЕ reset_user_state
     user_data[user_id] = {"entry_source": "deeplink_consult"}
     user_state[user_id] = "consultation"
@@ -1432,9 +1442,9 @@ def send_consultation_participants_question(user_id, chat_id):
     participants_text = "👥 Кто будет на созвоне?"
     markup = telebot.types.InlineKeyboardMarkup(row_width=1)
     markup.add(
-        telebot.types.InlineKeyboardButton("👤 Я один", callback_data="consult_part_1"),
-        telebot.types.InlineKeyboardButton("👥 Я с бизнес партнером", callback_data="consult_part_partners"),
-        telebot.types.InlineKeyboardButton("💼 Я не принимаю решений", callback_data="consult_part_employee")
+        telebot.types.InlineKeyboardButton("Я один", callback_data="consult_part_1"),
+        telebot.types.InlineKeyboardButton("Я с бизнес партнером", callback_data="consult_part_partners"),
+        telebot.types.InlineKeyboardButton("Я не принимаю решений в компании", callback_data="consult_part_employee")
     )
     msg = safe_send_message(chat_id, participants_text, reply_markup=markup)
     if msg:
@@ -1448,10 +1458,10 @@ def send_consultation_time_question(user_id, chat_id):
     time_text = "🕐 Когда удобно выйти в Zoom?"
     markup = telebot.types.InlineKeyboardMarkup(row_width=2)
     markup.add(
-        telebot.types.InlineKeyboardButton("🌅 Завтра 9-12", callback_data="consult_time_tmrw_am"),
-        telebot.types.InlineKeyboardButton("☀️ Завтра 12-18", callback_data="consult_time_tmrw_pm"),
-        telebot.types.InlineKeyboardButton("📅 Послезавтра", callback_data="consult_time_after_tmrw"),
-        telebot.types.InlineKeyboardButton("🎡 В выходные", callback_data="consult_time_weekend")
+        telebot.types.InlineKeyboardButton("Завтра 9-12", callback_data="consult_time_tmrw_am"),
+        telebot.types.InlineKeyboardButton("Завтра 12-18", callback_data="consult_time_tmrw_pm"),
+        telebot.types.InlineKeyboardButton("Послезавтра", callback_data="consult_time_after_tmrw"),
+        telebot.types.InlineKeyboardButton("В выходные", callback_data="consult_time_weekend")
     )
     msg = safe_send_message(chat_id, time_text, reply_markup=markup)
     if msg:
@@ -1493,9 +1503,9 @@ def handle_consultation_callback(call, user_id):
         # Выбор участников -> Спрашиваем время
         val = data.replace("consult_part_", "")
         mapping = {
-            "1": "Я один 👤",
-            "partners": "Я с бизнес партнером 👥",
-            "employee": "Я не принимаю решений 💼"
+            "1": "Я один",
+            "partners": "Я с бизнес партнером",
+            "employee": "Я не принимаю решений в компании"
         }
         user_data[user_id]["participants"] = mapping.get(val, val)
         send_consultation_time_question(user_id, chat_id)
@@ -1504,10 +1514,10 @@ def handle_consultation_callback(call, user_id):
         # Выбор времени -> Финиш
         val = data.replace("consult_time_", "")
         mapping = {
-            "tmrw_am": "Завтра 9-12 🌅",
-            "tmrw_pm": "Завтра 12-18 ☀️",
-            "after_tmrw": "Послезавтра 📅",
-            "weekend": "В выходные 🎡"
+            "tmrw_am": "Завтра 9-12",
+            "tmrw_pm": "Завтра 12-18",
+            "after_tmrw": "Послезавтра",
+            "weekend": "В выходные"
         }
         user_data[user_id]["time"] = mapping.get(val, val)
         # Вызываем финиш
