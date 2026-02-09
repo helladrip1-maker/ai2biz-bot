@@ -590,7 +590,6 @@ def check_for_commands(message):
         process_help_command(message)
         return True
     return False
-    return False
 
 def build_inline_keyboard(buttons_config):
     """Создает InlineKeyboardMarkup из конфигурации кнопок."""
@@ -1586,7 +1585,7 @@ def index():
 
 # ===== ЗАПУСК =====
 if __name__ == "__main__":
-    print("✅ AI2BIZ Bot v8.0 Autofunnel запущен.")
+    print("✅ AI2BIZ Bot v8.1 (Cache Fix) запущен.")
     load_file_cache() # Загружаем кэш при старте
     if not GSPREAD_AVAILABLE:
         print("⚠️ gspread не установлен. Добавьте в requirements.txt и выполните redeploy.")
