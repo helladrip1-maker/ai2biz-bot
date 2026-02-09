@@ -113,16 +113,18 @@ def init_google_sheets():
         try:
             sheet.worksheet("Users")
         except Exception:
-            worksheet = sheet.add_worksheet("Users", 1000, 12)
+            worksheet = sheet.add_worksheet("Users", 1000, 20)
             worksheet.append_row([
                 "User ID", "Username", "Name", "Started", 
                 "Last Action", "State", "Lead Quality", "Answers", "Messages Sent",
                 "Next Scheduled Message", "Run Date", "Chat ID",
-                "Last Sent Message", "Last Sent At", "Last Send Status"
+                "Last Sent Message", "Last Sent At", "Last Send Status",
+                "Consult Next Message", "Consult Run Date", "Last Activity",
+                "Consult Form State", "Form Completed At"
             ])
             print("✅ Создан лист Users")
         else:
-            # Обновляем заголовок, если отсутствует Chat ID
+            # Обновляем заголовок, если отсутствуют новые столбцы
             try:
                 worksheet = sheet.worksheet("Users")
                 headers = worksheet.row_values(1)
@@ -134,22 +136,18 @@ def init_google_sheets():
                     worksheet.update_cell(1, 14, "Last Sent At")
                 if "Last Send Status" not in headers:
                     worksheet.update_cell(1, 15, "Last Send Status")
+                if "Consult Next Message" not in headers:
+                    worksheet.update_cell(1, 16, "Consult Next Message")
+                if "Consult Run Date" not in headers:
+                    worksheet.update_cell(1, 17, "Consult Run Date")
+                if "Last Activity" not in headers:
+                    worksheet.update_cell(1, 18, "Last Activity")
+                if "Consult Form State" not in headers:
+                    worksheet.update_cell(1, 19, "Consult Form State")
+                if "Form Completed At" not in headers:
+                    worksheet.update_cell(1, 20, "Form Completed At")
             except Exception:
                 pass
-
-            # Обновляем заголовки для колонок P, Q, R (Consultation Follow-up)
-            try:
-                worksheet = sheet.worksheet("Users")
-                headers = worksheet.row_values(1)
-                # P=16, Q=17, R=18
-                if len(headers) < 16 or "Consult Next Msg" not in headers:
-                    worksheet.update_cell(1, 16, "Consult Next Msg")
-                if len(headers) < 17 or "Consult Time" not in headers:
-                    worksheet.update_cell(1, 17, "Consult Time")
-                if len(headers) < 18 or "Consult Chat ID" not in headers:
-                    worksheet.update_cell(1, 18, "Consult Chat ID")
-            except Exception as e:
-                print(f"⚠️ Ошибка обновления заголовков P-R: {e}")
         
         return sheet
     except Exception as e:
@@ -266,106 +264,33 @@ def create_or_update_user(user_id, username, first_name, action="", state="", ch
                 worksheet.update_cell(row, 7, lead_source)  # Lead Source (Column G)
             if chat_id is not None:
                 worksheet.update_cell(row, 12, str(chat_id))  # Chat ID
-            
-            # --- ЛОГИКА RE-ENTRY (ВОЗВРАЩЕНИЕ ПОЛЬЗОВАТЕЛЯ) ---
-            # Если пользователь вернулся спустя 48 часов, сбрасываем флаг остановки воронки
-            try:
-                last_action_str = str(cell_values[4]) if len(cell_values) > 4 else "" # Column E (5) - Last Action (index 4 in 0-based list from row_values loops usually, but here accessing cell directly or row)
-                # Для надежности читаем ячейку E{row}
-                # last_action_val = worksheet.cell(row, 5).value 
-                # (Reading cell explicitly is slow, rely on passed 'action' if it's new, but we need OLD action time)
-                
-                # Check Last Action timestamp (Column D - Started? No wait, D is Started. Column E is Last Action? 
-                # Let's check init: "User ID", "Username", "Name", "Started", "Last Action"
-                # So Started is D (4), Last Action is E (5). 
-                # Wait, where is the timestamp of LAST operation?
-                # The code updates "Started" only on creation.
-                # "Last Action" column stores the action name, e.g. "START_FUNNEL".
-                # We don't seem to have a specific "Last Action Time" column in the explicitly named headers except "Last Sent At".
-                # BUT `create_or_update_user` updates "Last Action" with the action name, but doesn't seem to write a timestamp for it specifically?
-                # Ah, row 262: `timestamp` is written to `Started` (row, 4) ONLY on create.
-                
-                # Let's look at `log_action` -> writes to "Stats" sheet.
-                # `create_or_update_user` does NOT update a "Last Seen" timestamp column currently. 
-                # However, we can use "Last Sent At" (N) or create a new logic.
-                # OR we can just rely on the fact that if they are calling /start (START_FUNNEL), we should reset.
-                
-                # Let's check if the user WAS stopped.
-                if scheduler and scheduler.is_stopped(user_id):
-                     # Если это явный перезапуск (START_FUNNEL) или запрос консультации
-                     if action in ["START_FUNNEL", "consultation_requested", "consultation_requested_deeplink"]:
-                         # Проверяем, когда было последнее сообщение или просто безусловно сбрасываем,
-                         # если прошло много времени? 
-                         # ТЗ: "Сделай так, чтобы если лид вернулся в бота через какое то время (например 2 дня) то бот забывал про его заполненную анкету"
-                         
-                         # Мы можем просто сбросить флаг, если это явное действие пользователя
-                         # Но мы не хотим сбрасывать, если он просто ткнул кнопку через 5 минут.
-                         
-                         # Давайте проверим "Last Sent At" (последнее касание бота)
-                         last_sent_at_str = worksheet.cell(row, 14).value # Column N (14)
-                         if last_sent_at_str:
-                             try:
-                                 last_date = datetime.strptime(last_sent_at_str, "%Y-%m-%d %H:%M:%S")
-                                 if datetime.now() - last_date > timedelta(days=2):
-                                     logger.info(f"♻️ User {user_id} returned after >2 days. Resetting stopped state.")
-                                     scheduler.resume_funnel(user_id)
-                                     # Optional: Clear "completed" status in Action column?
-                                     # worksheet.update_cell(row, 5, "returned") 
-                             except Exception:
-                                 pass
-                         else:
-                             # Если нет даты последнего сообщения, но он остановлен - скорее всего давно.
-                             # Сбрасываем.
-                             scheduler.resume_funnel(user_id)
-
-            except Exception as e:
-                 logger.error(f"Error checking re-entry for {user_id}: {e}")
-
+            # Всегда обновляем Last Activity (column R/18)
+            worksheet.update_cell(row, 18, timestamp)  # Last Activity
             logger.info(f"✅ Обновлена запись пользователя {user_id}")
         except Exception:
-            # Создаем новую запись со всеми полями
-            # Порядок колонок согласно init_google_sheets:
-            # 1: User ID
-            # 2: Username
-            # 3: Name
-            # 4: Started
-            # 5: Last Action
-            # 6: State
-            # 7: Lead Quality / Source
-            # 8: Answers
-            # 9: Messages Sent
-            # 10: Next Scheduled Message
-            # 11: Run Date
-            # 12: Chat ID
-            # 13: Last Sent Message
-            # 14: Last Sent At
-            # 15: Last Send Status
-            # 16: Consult Next Msg
-            # 17: Consult Time
-            # 18: Consult Chat ID
-            
-            new_row = [
-                str(user_id),                   # 1 (User ID)
-                username or "",                 # 2 (B)
-                first_name or "",               # 3 (C)
-                timestamp,                      # 4 (D)
-                action or "",                   # 5 (E)
-                state or "initial",             # 6 (F)
-                lead_source or "",              # 7 (G - Lead Quality/Source)
-                "",                             # 8 (H - Answers)
-                "0",                            # 9 (I - Messages Sent)
-                "",                             # 10
-                "",                             # 11
-                str(chat_id) if chat_id else "",# 12 (L - Chat ID)
-                "",                             # 13
-                "",                             # 14
-                "",                             # 15
-                "",                             # 16
-                "",                             # 17
-                ""                              # 18
-            ]
-            logger.info(f"Adding new user row: {new_row}")
-            worksheet.append_row(new_row)
+            # Создаем новую запись со всеми полями (включая пустые для планировщика)
+            worksheet.append_row([
+                str(user_id),
+                username or "",
+                first_name or "",
+                timestamp,
+                action,
+                state,
+                lead_source or "",  # Lead Source
+                "",  # Answers
+                "0", # Messages Sent
+                "",  # Next Scheduled Message (col 10)
+                "",  # Run Date (col 11)
+                str(chat_id) if chat_id is not None else "",  # Chat ID (col 12)
+                "",  # Last Sent Message (col 13)
+                "",  # Last Sent At (col 14)
+                "",  # Last Send Status (col 15)
+                "",  # Consult Next Message (col 16/P)
+                "",  # Consult Run Date (col 17/Q)
+                timestamp,  # Last Activity (col 18/R)
+                "",  # Consult Form State (col 19/S)
+                ""   # Form Completed At (col 20/T)
+            ])
             logger.info(f"✅ Создана запись пользователя {user_id}")
         
         return True
@@ -565,6 +490,8 @@ def reset_user_state(user_id, resume=True):
     form_answers.pop(user_id, None)
     if scheduler:
         scheduler.cancel_consultation_followups(user_id)
+        # Закрываем форму консультации (очищаем состояние в таблице)
+        scheduler.close_consultation_form(user_id)
         if resume:
             scheduler.resume_funnel(user_id)
 
@@ -646,6 +573,11 @@ def send_welcome_internal(message):
     user_name = message.from_user.first_name or "Партнер"
     username = message.from_user.username or ""
     chat_id = message.chat.id
+    
+    # Проверяем неактивность (4+ дней) и сбрасываем состояние если нужно
+    if scheduler and scheduler.check_user_inactivity(user_id):
+        logger.info(f"🔄 Пользователь {user_id} неактивен 4+ дней, сбрасываем состояние")
+        scheduler.reset_inactive_user(user_id)
     
     # Всегда сбрасываем состояние при старте/перезапуске
     reset_user_state(user_id)
@@ -953,9 +885,11 @@ def handle_callback(call):
             bot.answer_callback_query(call.id)
             send_ai_file(user_id, chat_id)
 
-        elif callback_data.startswith("consult_"):
-            bot.answer_callback_query(call.id)
-            handle_consultation_callback(call, user_id)
+
+        # Старые inline-кнопки для консультации больше не используются (теперь reply-кнопки)
+        # elif callback_data.startswith("consult_"):
+        #     bot.answer_callback_query(call.id)
+        #     handle_consultation_callback(call, user_id)
         
         elif callback_data.startswith("answer_"):
             bot.answer_callback_query(call.id)
@@ -1152,6 +1086,11 @@ def handle_message(message):
     chat_id = message.chat.id
     text = (message.text or "").lower().strip()
     save_message_history(user_id, message.message_id)
+    
+    # Проверяем неактивность (4+ дней) и сбрасываем состояние если нужно
+    if scheduler and scheduler.check_user_inactivity(user_id):
+        logger.info(f"🔄 Пользователь {user_id} неактивен 4+ дней при получении сообщения, сбрасываем состояние")
+        scheduler.reset_inactive_user(user_id)
     
     # Проверяем команды
     if check_for_commands(message):
@@ -1357,14 +1296,10 @@ def ask_consultation_name(message, user_id):
         return
     user_data[user_id]["name"] = name
     duration_text = "⏰ Сколько времени функционирует ваш бизнес?"
-    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        telebot.types.InlineKeyboardButton("Делаю запуск", callback_data="consult_dur_launch"),
-        telebot.types.InlineKeyboardButton("До 1 года", callback_data="consult_dur_0-1"),
-        telebot.types.InlineKeyboardButton("1-3 года", callback_data="consult_dur_1-3"),
-        telebot.types.InlineKeyboardButton("3-5 лет", callback_data="consult_dur_3-5"),
-        telebot.types.InlineKeyboardButton("Более 5 лет", callback_data="consult_dur_5+"),
-    )
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.row("Делаю запуск", "До 1 года")
+    markup.row("1-3 года", "3-5 лет")
+    markup.row("Более 5 лет")
     msg = safe_send_message(chat_id, duration_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
@@ -1372,8 +1307,9 @@ def ask_consultation_name(message, user_id):
         if scheduler:
             scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_business_duration")
     
-    # Сбрасываем стейт, так как ждем коллбэк
-    user_state[user_id] = None
+    # Теперь ждем текстовый ответ, а не callback
+    user_state[user_id] = "consultation_business_duration"
+    bot.register_next_step_handler(message, ask_consultation_business_duration, user_id)
 
 def ask_consultation_business_duration(message, user_id):
     if check_for_commands(message):
@@ -1384,7 +1320,20 @@ def ask_consultation_business_duration(message, user_id):
     if scheduler:
         scheduler.cancel_consultation_followups(user_id)
 
-    user_data[user_id]["business_duration"] = message.text
+    duration_text = (message.text or "").strip()
+    # Валидация - проверяем, что выбран один из вариантов
+    valid_options = ["Делаю запуск", "До 1 года", "1-3 года", "3-5 лет", "Более 5 лет"]
+    if duration_text not in valid_options:
+        error_text = "Пожалуйста, выберите один из предложенных вариантов"
+        msg = safe_send_message(chat_id, error_text)
+        if msg:
+            save_message_history(user_id, msg.message_id)
+            if scheduler:
+                scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_business_duration")
+        bot.register_next_step_handler(message, ask_consultation_business_duration, user_id)
+        return
+    
+    user_data[user_id]["business_duration"] = duration_text
     telegram_text = "📱 Ваш Telegram (@username) или номер телефона начиная с +7"
     msg = safe_send_message(
         chat_id, telegram_text, reply_markup=telebot.types.ReplyKeyboardRemove()
@@ -1394,6 +1343,7 @@ def ask_consultation_business_duration(message, user_id):
         if scheduler:
             scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_contact")
     user_state[user_id] = "consultation_contact"
+    bot.register_next_step_handler(message, ask_consultation_telegram_check, user_id)
 
 def ask_consultation_telegram_check(message, user_id):
     if check_for_commands(message):
@@ -1503,22 +1453,46 @@ def ask_consultation_business(message, user_id):
 
     user_data[user_id]["business"] = business_desc
     revenue_text = "💰 Какая сейчас выручка в месяц?"
-    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        telebot.types.InlineKeyboardButton("< 100K", callback_data="consult_rev_0-100k"),
-        telebot.types.InlineKeyboardButton("100K - 300K", callback_data="consult_rev_100-300k"),
-        telebot.types.InlineKeyboardButton("300K - 1M", callback_data="consult_rev_300k-1m"),
-        telebot.types.InlineKeyboardButton("1M - 5M", callback_data="consult_rev_1m-5m"),
-        telebot.types.InlineKeyboardButton("5M+", callback_data="consult_rev_5m+"),
-    )
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.row("< 100K", "100K - 300K")
+    markup.row("300K - 1M", "1M - 5M")
+    markup.row("5M+")
     msg = safe_send_message(chat_id, revenue_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
         if scheduler:
             scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_revenue")
     
-    # Сбрасываем стейт, ждем callback
-    user_state[user_id] = None
+    # Теперь ждем текстовый ответ
+    user_state[user_id] = "consultation_revenue"
+    bot.register_next_step_handler(message, ask_consultation_revenue, user_id)
+
+def ask_consultation_revenue(message, user_id):
+    """Обрабатывает ответ на вопрос о выручке."""
+    if check_for_commands(message):
+        return
+    chat_id = message.chat.id
+    save_message_history(user_id, message.message_id)
+    
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
+    
+    revenue_text = (message.text or "").strip()
+    # Валидация
+    valid_options = ["< 100K", "100K - 300K", "300K - 1M", "1M - 5M", "5M+"]
+    if revenue_text not in valid_options:
+        error_text = "Пожалуйста, выберите один из предложенных вариантов"
+        msg = safe_send_message(chat_id, error_text)
+        if msg:
+            save_message_history(user_id, msg.message_id)
+            if scheduler:
+                scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_revenue")
+        bot.register_next_step_handler(message, ask_consultation_revenue, user_id)
+        return
+    
+    user_data[user_id]["revenue"] = revenue_text
+    send_consultation_participants_question(user_id, chat_id)
+
 
 def send_consultation_contact_prompt(user_id, chat_id):
     """Отправляет запрос контакта (после выбора длительности)."""
@@ -1536,35 +1510,58 @@ def send_consultation_contact_prompt(user_id, chat_id):
 def send_consultation_participants_question(user_id, chat_id):
     """Отправляет вопрос про участников (после выручки)."""
     participants_text = "👥 Кто будет на созвоне?"
-    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        telebot.types.InlineKeyboardButton("Я один", callback_data="consult_part_1"),
-        telebot.types.InlineKeyboardButton("Я с бизнес партнером", callback_data="consult_part_partners"),
-        telebot.types.InlineKeyboardButton("Я не принимаю решений в компании", callback_data="consult_part_employee")
-    )
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.row("Я один")
+    markup.row("Я с бизнес партнером")
+    markup.row("Я не принимаю решений в компании")
     msg = safe_send_message(chat_id, participants_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
         if scheduler:
             scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_participants")
-    user_state[user_id] = None
+    user_state[user_id] = "consultation_participants"
+    # Регистрируем обработчик для следующего шага
+    bot.register_next_step_handler_by_chat_id(chat_id, ask_consultation_participants, user_id)
+
+def ask_consultation_participants(message, user_id):
+    """Обрабатывает ответ на вопрос об участниках."""
+    if check_for_commands(message):
+        return
+    chat_id = message.chat.id
+    save_message_history(user_id, message.message_id)
+    
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
+    
+    participants_text = (message.text or "").strip()
+    # Валидация
+    valid_options = ["Я один", "Я с бизнес партнером", "Я не принимаю решений в компании"]
+    if participants_text not in valid_options:
+        error_text = "Пожалуйста, выберите один из предложенных вариантов"
+        msg = safe_send_message(chat_id, error_text)
+        if msg:
+            save_message_history(user_id, msg.message_id)
+            if scheduler:
+                scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_participants")
+        bot.register_next_step_handler(message, ask_consultation_participants, user_id)
+        return
+    
+    user_data[user_id]["participants"] = participants_text
+    send_consultation_time_question(user_id, chat_id)
 
 def send_consultation_time_question(user_id, chat_id):
     """Отправляет вопрос про время (после участников)."""
     time_text = "🕐 Когда удобно выйти в Zoom?"
-    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        telebot.types.InlineKeyboardButton("Завтра 9-12", callback_data="consult_time_tmrw_am"),
-        telebot.types.InlineKeyboardButton("Завтра 12-18", callback_data="consult_time_tmrw_pm"),
-        telebot.types.InlineKeyboardButton("Послезавтра", callback_data="consult_time_after_tmrw"),
-        telebot.types.InlineKeyboardButton("В выходные", callback_data="consult_time_weekend")
-    )
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    markup.row("Завтра 9-12", "Завтра 12-18")
+    markup.row("Послезавтра", "В выходные")
     msg = safe_send_message(chat_id, time_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
         if scheduler:
             scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_time")
-    user_state[user_id] = None
+    user_state[user_id] = "consultation_time"
+    bot.register_next_step_handler_by_chat_id(chat_id, ask_consultation_time, user_id)
 
 def handle_consultation_callback(call, user_id):
     """Обрабатывает callback-кнопки анкеты консультации."""
@@ -1618,6 +1615,34 @@ def handle_consultation_callback(call, user_id):
         user_data[user_id]["time"] = mapping.get(val, val)
         # Вызываем финиш
         finish_form_consultation(call.message, user_id)
+
+def ask_consultation_time(message, user_id):
+    """Обрабатывает ответ на вопрос о времени."""
+    if check_for_commands(message):
+        return
+    chat_id = message.chat.id
+    save_message_history(user_id, message.message_id)
+    
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
+    
+    time_text = (message.text or "").strip()
+    # Валидация
+    valid_options = ["Завтра 9-12", "Завтра 12-18", "Послезавтра", "В выходные"]
+    if time_text not in valid_options:
+        error_text = "Пожалуйста, выберите один из предложенных вариантов"
+        msg = safe_send_message(chat_id, error_text)
+        if msg:
+            save_message_history(user_id, msg.message_id)
+            if scheduler:
+                scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_time")
+        bot.register_next_step_handler(message, ask_consultation_time, user_id)
+        return
+    
+    user_data[user_id]["time"] = time_text
+    user_data[user_id]["zoom_time"] = time_text
+    # Завершаем форму
+    finish_form_consultation(message, user_id)
 
 def finish_form_consultation(message, user_id):
     # Если данные уже есть (из callback), не перезаписываем их текстом сообщения (которое может быть командой или промптом)

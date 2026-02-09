@@ -26,6 +26,16 @@ class FollowUpScheduler:
             "message_file_followup": ("message_5", 23 * 60 + 50),
             "message_3_1": ("message_4", 23 * 60 + 50),
         }
+        
+        # Конфигурация столбцов для двух планировщиков
+        self.main_scheduler_cols = {"next_msg": 10, "run_date": 11}  # J, K
+        self.consult_scheduler_cols = {"next_msg": 16, "run_date": 17}  # P, Q
+        self.last_activity_col = 18  # R
+        self.consult_state_col = 19  # S
+        self.form_completed_col = 20  # T
+        
+        # Порог неактивности для сброса (4 дня в секундах)
+        self.inactivity_threshold = 4 * 24 * 60 * 60  # 4 days
 
         if self.use_sheet_queue:
             # Периодический диспетчер: проверяет таблицу и отправляет просроченные сообщения
@@ -202,28 +212,6 @@ class FollowUpScheduler:
         except Exception as e:
             logger.error(f"Ошибка отправки сообщения воронки {user_id}: {e}")
             self.update_send_log(user_id, message_key, "ERROR")
-            
-            # --- RETRY LOGIC / ПОВТОРНАЯ ПОПЫТКА ---
-            if hasattr(e, 'result') and e.result.status_code == 403: # User blocked bot
-                logger.info(f"User {user_id} blocked bot. Stopping funnel.")
-                self.stop_funnel(user_id)
-                return False
-                
-            # Generic retry for other errors (except blockage)
-            try:
-                logger.info(f"Rescheduling failed message {message_key} for {user_id} in 5 min")
-                retry_time = datetime.now(self.tz) + timedelta(minutes=5)
-                
-                if self.use_sheet_queue:
-                    # Write back to sheet to retry later
-                    # Determine which column based on key
-                    if message_key.startswith("consult_") or message_key in ["message_12", "message_13"]:
-                         self.update_consultation_sheet_schedule(user_id, message_key, retry_time, chat_id)
-                    else:
-                         self.update_sheet_schedule(user_id, message_key, retry_time, chat_id)
-            except Exception as retry_e:
-                logger.error(f"Failed to reschedule retry: {retry_e}")
-
             return False
 
     def stop_funnel(self, user_id):
@@ -248,6 +236,9 @@ class FollowUpScheduler:
         """Отмечает действие пользователя. Отменяет воронку только при полном заполнении анкет/заявок."""
         logger.info(f"Пользователь {user_id} совершил действие: {action}")
         
+        # Обновляем Last Activity в Google Sheets
+        self.update_last_activity(user_id)
+        
         # Список действий, КУДА МЫ УХОДИМ ИЗ ВОРОНКИ НАВСЕГДА (или до ручного перезапуска)
         # Теперь это только завершенные формы
         stop_actions = [
@@ -258,10 +249,158 @@ class FollowUpScheduler:
         if action in stop_actions:
             logger.info(f"Пользователь {user_id} завершил квалификацию ({action}), останавливаем дожимы")
             self.stop_funnel(user_id)
+            # Записываем время завершения формы
+            if action == "completed_consultation_form":
+                self.mark_form_completed(user_id)
         else:
             # Для всех остальных действий (скачивание файлов, кнопки меню, начало анкеты)
             # мы НЕ отменяем воронку, чтобы дожимы продолжали приходить если пользователь не закончил.
             logger.info(f"Пользователь {user_id} активен ({action}), воронка продолжается")
+
+    def check_user_inactivity(self, user_id):
+        """Проверяет, неактивен ли пользователь более 4 дней."""
+        if not self.google_sheets:
+            return False
+        
+        try:
+            worksheet = self.google_sheets.worksheet("Users")
+            cell = worksheet.find(str(user_id), in_column=1)
+            if not cell:
+                return False
+            
+            row = cell.row
+            last_activity_str = worksheet.cell(row, self.last_activity_col).value
+            
+            if not last_activity_str:
+                return False
+            
+            last_activity = datetime.strptime(last_activity_str, "%Y-%m-%d %H:%M:%S")
+            last_activity = self.tz.localize(last_activity)
+            now = datetime.now(self.tz)
+            
+            inactive_seconds = (now - last_activity).total_seconds()
+            return inactive_seconds >= self.inactivity_threshold
+            
+        except Exception as e:
+            logger.error(f"Ошибка проверки неактивности для {user_id}: {e}")
+            return False
+
+    def reset_inactive_user(self, user_id):
+        """Сбрасывает состояние неактивного пользователя (форма + воронка)."""
+        if not self.google_sheets:
+            return
+        
+        try:
+            worksheet = self.google_sheets.worksheet("Users")
+            cell = worksheet.find(str(user_id), in_column=1)
+            if not cell:
+                return
+            
+            row = cell.row
+            # Очищаем оба планировщика
+            worksheet.update(values=[["", ""]], range_name=f'J{row}:K{row}')  # Main funnel
+            worksheet.update(values=[["", ""]], range_name=f'P{row}:Q{row}')  # Consultation
+            # Очищаем состояние формы и время завершения
+            worksheet.update_cell(row, self.consult_state_col, "")
+            worksheet.update_cell(row, self.form_completed_col, "")
+            
+            # Снимаем флаг остановки воронки
+            if user_id in self.user_stop_flags:
+                self.user_stop_flags[user_id] = False
+            
+            logger.info(f"✅ Сброшено состояние неактивного пользователя {user_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка сброса пользователя {user_id}: {e}")
+
+    def update_last_activity(self, user_id):
+        """Обновляет timestamp последней активности пользователя."""
+        if not self.google_sheets:
+            return
+        
+        try:
+            worksheet = self.google_sheets.worksheet("Users")
+            cell = worksheet.find(str(user_id), in_column=1)
+            if cell:
+                row = cell.row
+                timestamp = datetime.now(self.tz).strftime("%Y-%m-%d %H:%M:%S")
+                worksheet.update_cell(row, self.last_activity_col, timestamp)
+        except Exception as e:
+            logger.error(f"❌ Ошибка обновления Last Activity для {user_id}: {e}")
+
+    def mark_form_completed(self, user_id):
+        """Отмечает время завершения формы консультации."""
+        if not self.google_sheets:
+            return
+        
+        try:
+            worksheet = self.google_sheets.worksheet("Users")
+            cell = worksheet.find(str(user_id), in_column=1)
+            if cell:
+                row = cell.row
+                timestamp = datetime.now(self.tz).strftime("%Y-%m-%d %H:%M:%S")
+                worksheet.update_cell(row, self.form_completed_col, timestamp)
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи времени завершения формы для {user_id}: {e}")
+
+    def schedule_consultation_message(self, user_id, chat_id, message_key, delay_minutes=5):
+        """Планирует сообщение дожима консультации (отдельно от основной воронки)."""
+        if self.is_stopped(user_id):
+            return
+        
+        run_date = datetime.now(self.tz) + timedelta(minutes=delay_minutes)
+        job_id = f"consult_{user_id}_{message_key}"
+        
+        # Удаляем старую задачу если есть
+        self.cancel_job(job_id)
+        
+        logger.info(f"Планирую консультацию {message_key} для {user_id} через {delay_minutes} мин")
+        
+        if self.use_sheet_queue:
+            self.update_consultation_schedule(user_id, message_key, run_date, chat_id=chat_id)
+            return
+        
+        self.scheduler.add_job(
+            self.send_message_job,
+            trigger=DateTrigger(run_date=run_date),
+            args=[user_id, chat_id, message_key, False],  # schedule_next=False для дожимов
+            id=job_id,
+            replace_existing=True
+        )
+        self.update_consultation_schedule(user_id, message_key, run_date, chat_id=chat_id)
+
+    def update_consultation_schedule(self, user_id, next_msg, run_date, chat_id=None):
+        """Обновляет расписание консультации в столбцах P, Q."""
+        if not self.google_sheets:
+            return
+        
+        try:
+            worksheet = self.google_sheets.worksheet("Users")
+            cell = worksheet.find(str(user_id), in_column=1)
+            if cell:
+                row = cell.row
+                worksheet.update_cell(row, self.consult_scheduler_cols["next_msg"], next_msg)
+                worksheet.update_cell(row, self.consult_scheduler_cols["run_date"], run_date.strftime("%Y-%m-%d %H:%M:%S"))
+                if chat_id is not None:
+                    worksheet.update_cell(row, 12, str(chat_id))
+                logger.info(f"✅ Consultation schedule updated for {user_id}: {next_msg} at {run_date}")
+        except Exception as e:
+            logger.error(f"❌ Failed to update consultation schedule for {user_id}: {e}")
+
+    def clear_consultation_schedule(self, user_id):
+        """Очищает расписание консультации (столбцы P, Q)."""
+        if not self.google_sheets:
+            return
+        
+        try:
+            worksheet = self.google_sheets.worksheet("Users")
+            cell = worksheet.find(str(user_id), in_column=1)
+            if cell:
+                row = cell.row
+                worksheet.update(values=[["", ""]], range_name=f'P{row}:Q{row}')
+                logger.info(f"✅ Cleared consultation schedule for {user_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to clear consultation schedule for {user_id}: {e}")
 
     def schedule_message_4_followup(self, user_id, chat_id):
         """Логика после скачивания Checklist (Message 4)."""
@@ -321,29 +460,13 @@ class FollowUpScheduler:
 
     def schedule_consultation_followup(self, user_id, chat_id, step_key):
         """Планирует напоминание для анкеты консультации через 5 минут."""
-        run_date = datetime.now(self.tz) + timedelta(minutes=5)
-        job_id = f"consult_followup_{user_id}_{step_key}"
-        
-        # Удаляем предыдущие напоминания для чистоты
-        self.cancel_consultation_followups(user_id)
-        
-        logger.info(f"Планирую напоминание {step_key} для {user_id} через 5 мин")
-        
-        self.scheduler.add_job(
-            self.send_message_job,
-            trigger=DateTrigger(run_date=run_date),
-            args=[user_id, chat_id, step_key, False], # schedule_next=False для напоминаний
-            id=job_id,
-            replace_existing=True
-        )
-        # Синхронизация с таблицей для надежности
-        if self.use_sheet_queue:
-            self.update_consultation_sheet_schedule(user_id, step_key, run_date, chat_id=chat_id)
+        # Используем новый отдельный планировщик консультаций
+        self.schedule_consultation_message(user_id, chat_id, step_key, delay_minutes=5)
 
     def cancel_consultation_followups(self, user_id):
         """Отменяет все текущие задачи-напоминания для анкеты консультации."""
         for job in list(self.scheduler.get_jobs()):
-            if job.id.startswith(f"consult_followup_{user_id}"):
+            if job.id.startswith(f"consult_followup_{user_id}") or job.id.startswith(f"consult_{user_id}"):
                 try:
                     self.scheduler.remove_job(job.id)
                     logger.info(f"Удалено напоминание {job.id}")
@@ -352,9 +475,9 @@ class FollowUpScheduler:
         # При любой отмене напоминаний - отменяем и восстановление воронки (если юзер ответил)
         self.cancel_funnel_recovery(user_id)
         
-        # Очищаем таблицу для этого пользователя (чтобы не висело старое напоминание)
+        # Очищаем таблицу консультации для этого пользователя
         if self.use_sheet_queue:
-            self.clear_consultation_sheet_schedule(user_id)
+            self.clear_consultation_schedule(user_id)
 
     def schedule_funnel_recovery(self, user_id, chat_id):
         """Планирует отправку Message 0 через 10 минут для лидов из диплинка."""
@@ -420,41 +543,6 @@ class FollowUpScheduler:
         except Exception as e:
             logger.error(f"❌ Failed to update Google Sheets schedule for {user_id}: {e}")
 
-    def update_consultation_sheet_schedule(self, user_id, next_msg, run_date, chat_id=None):
-        """Updates the information about scheduled CONSULTATION messages in Google Sheets (Cols P, Q, R)."""
-        if not self.google_sheets:
-            return
-        try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if cell:
-                row = cell.row
-                # 16: Consult Next Msg (P)
-                # 17: Consult Time (Q)
-                # 18: Consult Chat ID (R)
-                worksheet.update_cell(row, 16, next_msg)
-                worksheet.update_cell(row, 17, run_date.strftime("%Y-%m-%d %H:%M:%S"))
-                if chat_id is not None:
-                    worksheet.update_cell(row, 18, str(chat_id))
-                logger.info(f"✅ Google Sheets updated for {user_id} (Consult): {next_msg} at {run_date}")
-        except Exception as e:
-            logger.error(f"❌ Failed to update Google Sheets consult schedule for {user_id}: {e}")
-
-    def clear_consultation_sheet_schedule(self, user_id):
-        """Clears the consultation schedule in Google Sheets (Cols P, Q)."""
-        if not self.google_sheets:
-            return
-        try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if cell:
-                row = cell.row
-                worksheet.update_cell(row, 16, "")
-                worksheet.update_cell(row, 17, "")
-                logger.info(f"✅ Google Sheets consult schedule cleared for {user_id}")
-        except Exception as e:
-            logger.error(f"❌ Failed to clear Google Sheets consult schedule for {user_id}: {e}")
-
     def clear_sheet_schedule(self, user_id):
         if not self.google_sheets:
             return
@@ -487,7 +575,7 @@ class FollowUpScheduler:
         return self.custom_follow_up.get(message_key)
 
     def dispatch_due_messages_from_sheet(self):
-        """Checks the sheet and sends overdue messages (Funnel & Consultation)."""
+        """Проверяет таблицу и отправляет просроченные сообщения (надежный диспетчер)."""
         if not self.google_sheets:
             return
 
@@ -507,79 +595,149 @@ class FollowUpScheduler:
                 user_id_val = record.get("User ID")
                 if not user_id_val:
                     continue
+
+                # Получаем данные из обоих планировщиков
+                main_msg = str(record_get(record, "Next Scheduled Message", "Next Msg")).strip()
+                main_date_str = str(record_get(record, "Run Date", "Time")).strip()
                 
-                # Safe casting
+                consult_msg = str(record_get(record, "Consult Next Message")).strip()
+                consult_date_str = str(record_get(record, "Consult Run Date")).strip()
+                
+                chat_id_val = record_get(record, "Chat ID") or user_id_val
+
                 try:
                     user_id = int(user_id_val)
                 except Exception:
                     user_id = user_id_val
 
-                chat_id_val = record_get(record, "Chat ID") or user_id_val
                 try:
                     chat_id = int(chat_id_val)
                 except Exception:
                     chat_id = chat_id_val
 
-                row_num = idx + 2
+                if self.is_stopped(user_id):
+                    continue
 
-                # --- 1. MAIN FUNNEL (Columns J, K) ---
-                next_msg = str(record_get(record, "Next Scheduled Message", "Next Msg")).strip()
-                run_date_str = str(record_get(record, "Run Date", "Time")).strip()
-
-                if next_msg and run_date_str:
+                # Парсим даты
+                main_date = None
+                consult_date = None
+                
+                if main_msg and main_date_str:
                     try:
-                        run_date = datetime.strptime(run_date_str, "%Y-%m-%d %H:%M:%S")
-                        run_date = self.tz.localize(run_date)
-                        
-                        if run_date <= now:
-                            # Send message
-                            if not self.is_stopped(user_id):
-                                # Clear cells BEFORE sending
-                                worksheet.update(values=[["", ""]], range_name=f'J{row_num}:K{row_num}')
-                                
-                                sent = self.send_message_job(user_id, chat_id, next_msg, schedule_next=False)
-                                if sent:
-                                    plan = self.get_next_plan(next_msg)
-                                    if plan:
-                                        next_key, delay = plan
-                                        next_run = datetime.now(self.tz) + timedelta(minutes=delay)
-                                        self.update_sheet_schedule(user_id, next_key, next_run, chat_id=chat_id)
-                                    else:
-                                        logger.info(f"Funnel ended for {user_id} after {next_msg}")
-                    except Exception as e:
-                        logger.error(f"Error processing funnel row {row_num}: {e}")
-
-                # --- 2. CONSULTATION FOLLOW-UP (Columns P, Q) ---
-                consult_msg = str(record_get(record, "Consult Next Msg")).strip()
-                consult_date_str = str(record_get(record, "Consult Time")).strip()
-
+                        main_date = datetime.strptime(main_date_str, "%Y-%m-%d %H:%M:%S")
+                        main_date = self.tz.localize(main_date)
+                    except Exception:
+                        logger.error(f"Некорректная дата main в строке {idx + 2}: {main_date_str}")
+                
                 if consult_msg and consult_date_str:
                     try:
                         consult_date = datetime.strptime(consult_date_str, "%Y-%m-%d %H:%M:%S")
                         consult_date = self.tz.localize(consult_date)
+                    except Exception:
+                        logger.error(f"Некорректная дата consult в строке {idx + 2}: {consult_date_str}")
 
-                        if consult_date <= now:
-                            # Check stop flag? Ideally consult reminders should be sent regardless, 
-                            # but keeping consistent behavior (if user blocked bot, checked inside send_message_job usually, but is_stopped is internal flag)
-                            if not self.is_stopped(user_id):
-                                # Clear cells (P, Q)
-                                worksheet.update(values=[["", ""]], range_name=f'P{row_num}:Q{row_num}')
-                                
-                                # Send message
-                                self.send_consultation_message_job(user_id, chat_id, consult_msg)
-                    except Exception as e:
-                        logger.error(f"Error processing consult row {row_num}: {e}")
+                row_num = idx + 2
+                
+                # Проверяем, какие сообщения просрочены
+                main_due = main_date and main_date <= now
+                consult_due = consult_date and consult_date <= now
+
+                # КОНФЛИКТ: оба сообщения просрочены
+                if main_due and consult_due:
+                    logger.info(f"⚠️ Конфликт для {user_id}: оба планировщика имеют просроченные сообщения")
+                    
+                    # Приоритет: консультация
+                    # 1. Отправляем консультацию
+                    worksheet.update(values=[["", ""]], range_name=f'P{row_num}:Q{row_num}')
+                    sent = self.send_message_job(user_id, chat_id, consult_msg, schedule_next=False)
+                    
+                    if sent:
+                        # 2. Откладываем main на 10 минут
+                        new_main_date = now + timedelta(minutes=10)
+                        worksheet.update_cell(row_num, self.main_scheduler_cols["run_date"], 
+                                            new_main_date.strftime("%Y-%m-%d %H:%M:%S"))
+                        logger.info(f"✅ Main message {main_msg} отложено на 10 минут для {user_id}")
+                        
+                        # 3. Если main сообщение - это message_X (основная воронка), закрываем форму
+                        if main_msg.startswith("message_"):
+                            self.close_consultation_form(user_id)
+                    
+                    continue
+
+                # Только консультация просрочена
+                if consult_due:
+                    worksheet.update(values=[["", ""]], range_name=f'P{row_num}:Q{row_num}')
+                    sent = self.send_message_job(user_id, chat_id, consult_msg, schedule_next=False)
+                    
+                    if sent and consult_msg.startswith("consult_followup_"):
+                        # После последнего дожима консультации без ответа, планируем message_0 через 10 минут
+                        # Но только если пользователь пришел через диплинк
+                        u_data = self.user_data.get(user_id, {})
+                        is_deeplink = u_data.get("entry_source") == "deeplink_consult"
+                        
+                        if is_deeplink and not main_msg:
+                            # Планируем восстановление воронки
+                            self.schedule_funnel_recovery(user_id, chat_id)
+                    
+                    continue
+
+                # Только main просрочен
+                if main_due:
+                    worksheet.update(values=[["", ""]], range_name=f'J{row_num}:K{row_num}')
+                    sent = self.send_message_job(user_id, chat_id, main_msg, schedule_next=False)
+                    
+                    if sent:
+                        # Планируем следующее сообщение основной воронки
+                        plan = self.get_next_plan(main_msg)
+                        if plan:
+                            next_key, delay_minutes = plan
+                            next_run = now + timedelta(minutes=delay_minutes)
+                            self.update_sheet_schedule(user_id, next_key, next_run, chat_id=chat_id)
+                        
+                        # Если отправили сообщение основной воронки, закрываем форму консультации
+                        if main_msg.startswith("message_"):
+                            self.close_consultation_form(user_id)
+                    
+                    continue
 
         except Exception as e:
-            logger.error(f"Scheduler Dispatch Error: {e}")
+            logger.error(f"Ошибка диспетчера таблицы: {e}")
 
-    def send_consultation_message_job(self, user_id, chat_id, message_key):
-        """Sends a consultation message and updates consultation schedule."""
-        sent = self.send_message_job(user_id, chat_id, message_key, schedule_next=False)
-        if sent:
-             # Check if there is a next step for this consultation message
-             plan = self.get_next_plan(message_key)
-             if plan:
-                 next_key, delay = plan
-                 next_run = datetime.now(self.tz) + timedelta(minutes=delay)
-                 self.update_consultation_sheet_schedule(user_id, next_key, next_run, chat_id=chat_id)
+    def close_consultation_form(self, user_id):
+        """Закрывает форму консультации и сбрасывает ответы."""
+        if not self.google_sheets:
+            return
+        
+        try:
+            worksheet = self.google_sheets.worksheet("Users")
+            cell = worksheet.find(str(user_id), in_column=1)
+            if cell:
+                row = cell.row
+                # Получаем chat_id
+                chat_id_val = worksheet.cell(row, 12).value
+                chat_id = int(chat_id_val) if chat_id_val else user_id
+                
+                # Очищаем состояние формы
+                worksheet.update_cell(row, self.consult_state_col, "")
+                logger.info(f"✅ Форма консультации закрыта для {user_id}")
+                
+                # Удаляем reply-клавиатуру
+                try:
+                    import telebot
+                    self.bot.send_message(
+                        chat_id, 
+                        "⏸ Анкета консультации закрыта. Продолжаем основную цепочку сообщений.",
+                        reply_markup=telebot.types.ReplyKeyboardRemove()
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Ошибка удаления клавиатуры для {user_id}: {e}")
+                
+                # Очищаем данные формы в памяти
+                if user_id in self.user_data:
+                    # Сохраняем entry_source если есть
+                    entry_source = self.user_data[user_id].get("entry_source")
+                    self.user_data[user_id] = {}
+                    if entry_source:
+                        self.user_data[user_id]["entry_source"] = entry_source
+        except Exception as e:
+            logger.error(f"❌ Ошибка закрытия формы для {user_id}: {e}")
