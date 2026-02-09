@@ -66,26 +66,26 @@ FORM_QUESTIONS = {
 
 FILE_5_MISTAKES = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/5%20mistakes%20of%20managers.pdf?v=20251227"
+    "bot-files/5%20mistakes%20of%20managers.pdf?v=20260209"
 )
 FILE_CHECKLIST = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Check%20list%2010%20ways.pdf?v=20251227"
+    "bot-files/Check%20list%2010%20ways.pdf?v=20260209"
 )
 
 FILE_CASE_DEUTSCHER = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Case%20Deutscher%20Agent.pdf?v=20251227"
+    "bot-files/Case%20Deutscher%20Agent.pdf?v=20260209"
 )
 
 FILE_AVTOVORONKI = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Avtovoronki%20AI2BIZ.pdf?v=20251227"
+    "bot-files/Avtovoronki%20AI2BIZ.pdf?v=20260209"
 )
 
 FILE_AI = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/AI%20for%20Business%20AI2BIZ.pdf?v=20251227"
+    "bot-files/AI%20for%20Business%20AI2BIZ.pdf?v=20260209"
 )
 
 
