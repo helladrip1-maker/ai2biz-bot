@@ -129,8 +129,8 @@ Deutscher Agent за 2 недели получил рост заявок <b>в 2
 {
   inline_keyboard: [
     [
-      { text: "📞 Консультация", callback_data: "start_form" },
-      { text: "🎬 Кейс"}
+      { text: "📞 Консультация", callback_data: "consultation" },
+      { text: "🎬 Смотреть кейсы", callback_data: "examples" }
     ]
   ]
 }
@@ -176,8 +176,8 @@ Deutscher Agent за 2 недели получил рост заявок <b>в 2
 {
   inline_keyboard: [
     [
-      { text: "💬 Консультация", callback_data: "start_form" },
-      { text: "📊 Изучить кейс"}
+      { text: "💬 Консультация", callback_data: "consultation" },
+      { text: "📊 Изучить кейс", callback_data: "examples" }
     ]
   ]
 }
