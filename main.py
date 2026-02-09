@@ -136,6 +136,20 @@ def init_google_sheets():
                     worksheet.update_cell(1, 15, "Last Send Status")
             except Exception:
                 pass
+
+            # Обновляем заголовки для колонок P, Q, R (Consultation Follow-up)
+            try:
+                worksheet = sheet.worksheet("Users")
+                headers = worksheet.row_values(1)
+                # P=16, Q=17, R=18
+                if len(headers) < 16 or "Consult Next Msg" not in headers:
+                    worksheet.update_cell(1, 16, "Consult Next Msg")
+                if len(headers) < 17 or "Consult Time" not in headers:
+                    worksheet.update_cell(1, 17, "Consult Time")
+                if len(headers) < 18 or "Consult Chat ID" not in headers:
+                    worksheet.update_cell(1, 18, "Consult Chat ID")
+            except Exception as e:
+                print(f"⚠️ Ошибка обновления заголовков P-R: {e}")
         
         return sheet
     except Exception as e:
@@ -252,6 +266,61 @@ def create_or_update_user(user_id, username, first_name, action="", state="", ch
                 worksheet.update_cell(row, 7, lead_source)  # Lead Source (Column G)
             if chat_id is not None:
                 worksheet.update_cell(row, 12, str(chat_id))  # Chat ID
+            
+            # --- ЛОГИКА RE-ENTRY (ВОЗВРАЩЕНИЕ ПОЛЬЗОВАТЕЛЯ) ---
+            # Если пользователь вернулся спустя 48 часов, сбрасываем флаг остановки воронки
+            try:
+                last_action_str = str(cell_values[4]) if len(cell_values) > 4 else "" # Column E (5) - Last Action (index 4 in 0-based list from row_values loops usually, but here accessing cell directly or row)
+                # Для надежности читаем ячейку E{row}
+                # last_action_val = worksheet.cell(row, 5).value 
+                # (Reading cell explicitly is slow, rely on passed 'action' if it's new, but we need OLD action time)
+                
+                # Check Last Action timestamp (Column D - Started? No wait, D is Started. Column E is Last Action? 
+                # Let's check init: "User ID", "Username", "Name", "Started", "Last Action"
+                # So Started is D (4), Last Action is E (5). 
+                # Wait, where is the timestamp of LAST operation?
+                # The code updates "Started" only on creation.
+                # "Last Action" column stores the action name, e.g. "START_FUNNEL".
+                # We don't seem to have a specific "Last Action Time" column in the explicitly named headers except "Last Sent At".
+                # BUT `create_or_update_user` updates "Last Action" with the action name, but doesn't seem to write a timestamp for it specifically?
+                # Ah, row 262: `timestamp` is written to `Started` (row, 4) ONLY on create.
+                
+                # Let's look at `log_action` -> writes to "Stats" sheet.
+                # `create_or_update_user` does NOT update a "Last Seen" timestamp column currently. 
+                # However, we can use "Last Sent At" (N) or create a new logic.
+                # OR we can just rely on the fact that if they are calling /start (START_FUNNEL), we should reset.
+                
+                # Let's check if the user WAS stopped.
+                if scheduler and scheduler.is_stopped(user_id):
+                     # Если это явный перезапуск (START_FUNNEL) или запрос консультации
+                     if action in ["START_FUNNEL", "consultation_requested", "consultation_requested_deeplink"]:
+                         # Проверяем, когда было последнее сообщение или просто безусловно сбрасываем,
+                         # если прошло много времени? 
+                         # ТЗ: "Сделай так, чтобы если лид вернулся в бота через какое то время (например 2 дня) то бот забывал про его заполненную анкету"
+                         
+                         # Мы можем просто сбросить флаг, если это явное действие пользователя
+                         # Но мы не хотим сбрасывать, если он просто ткнул кнопку через 5 минут.
+                         
+                         # Давайте проверим "Last Sent At" (последнее касание бота)
+                         last_sent_at_str = worksheet.cell(row, 14).value # Column N (14)
+                         if last_sent_at_str:
+                             try:
+                                 last_date = datetime.strptime(last_sent_at_str, "%Y-%m-%d %H:%M:%S")
+                                 if datetime.now() - last_date > timedelta(days=2):
+                                     logger.info(f"♻️ User {user_id} returned after >2 days. Resetting stopped state.")
+                                     scheduler.resume_funnel(user_id)
+                                     # Optional: Clear "completed" status in Action column?
+                                     # worksheet.update_cell(row, 5, "returned") 
+                             except Exception:
+                                 pass
+                         else:
+                             # Если нет даты последнего сообщения, но он остановлен - скорее всего давно.
+                             # Сбрасываем.
+                             scheduler.resume_funnel(user_id)
+
+            except Exception as e:
+                 logger.error(f"Error checking re-entry for {user_id}: {e}")
+
             logger.info(f"✅ Обновлена запись пользователя {user_id}")
         except Exception:
             # Создаем новую запись со всеми полями (включая пустые для планировщика)

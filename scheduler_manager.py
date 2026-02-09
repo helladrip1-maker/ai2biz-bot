@@ -202,6 +202,28 @@ class FollowUpScheduler:
         except Exception as e:
             logger.error(f"Ошибка отправки сообщения воронки {user_id}: {e}")
             self.update_send_log(user_id, message_key, "ERROR")
+            
+            # --- RETRY LOGIC / ПОВТОРНАЯ ПОПЫТКА ---
+            if hasattr(e, 'result') and e.result.status_code == 403: # User blocked bot
+                logger.info(f"User {user_id} blocked bot. Stopping funnel.")
+                self.stop_funnel(user_id)
+                return False
+                
+            # Generic retry for other errors (except blockage)
+            try:
+                logger.info(f"Rescheduling failed message {message_key} for {user_id} in 5 min")
+                retry_time = datetime.now(self.tz) + timedelta(minutes=5)
+                
+                if self.use_sheet_queue:
+                    # Write back to sheet to retry later
+                    # Determine which column based on key
+                    if message_key.startswith("consult_") or message_key in ["message_12", "message_13"]:
+                         self.update_consultation_sheet_schedule(user_id, message_key, retry_time, chat_id)
+                    else:
+                         self.update_sheet_schedule(user_id, message_key, retry_time, chat_id)
+            except Exception as retry_e:
+                logger.error(f"Failed to reschedule retry: {retry_e}")
+
             return False
 
     def stop_funnel(self, user_id):
@@ -316,7 +338,7 @@ class FollowUpScheduler:
         )
         # Синхронизация с таблицей для надежности
         if self.use_sheet_queue:
-            self.update_sheet_schedule(user_id, step_key, run_date, chat_id=chat_id)
+            self.update_consultation_sheet_schedule(user_id, step_key, run_date, chat_id=chat_id)
 
     def cancel_consultation_followups(self, user_id):
         """Отменяет все текущие задачи-напоминания для анкеты консультации."""
@@ -328,12 +350,11 @@ class FollowUpScheduler:
                 except Exception:
                     pass
         # При любой отмене напоминаний - отменяем и восстановление воронки (если юзер ответил)
-        # При любой отмене напоминаний - отменяем и восстановление воронки (если юзер ответил)
         self.cancel_funnel_recovery(user_id)
         
         # Очищаем таблицу для этого пользователя (чтобы не висело старое напоминание)
         if self.use_sheet_queue:
-            self.clear_sheet_schedule(user_id)
+            self.clear_consultation_sheet_schedule(user_id)
 
     def schedule_funnel_recovery(self, user_id, chat_id):
         """Планирует отправку Message 0 через 10 минут для лидов из диплинка."""
@@ -399,6 +420,41 @@ class FollowUpScheduler:
         except Exception as e:
             logger.error(f"❌ Failed to update Google Sheets schedule for {user_id}: {e}")
 
+    def update_consultation_sheet_schedule(self, user_id, next_msg, run_date, chat_id=None):
+        """Updates the information about scheduled CONSULTATION messages in Google Sheets (Cols P, Q, R)."""
+        if not self.google_sheets:
+            return
+        try:
+            worksheet = self.google_sheets.worksheet("Users")
+            cell = worksheet.find(str(user_id), in_column=1)
+            if cell:
+                row = cell.row
+                # 16: Consult Next Msg (P)
+                # 17: Consult Time (Q)
+                # 18: Consult Chat ID (R)
+                worksheet.update_cell(row, 16, next_msg)
+                worksheet.update_cell(row, 17, run_date.strftime("%Y-%m-%d %H:%M:%S"))
+                if chat_id is not None:
+                    worksheet.update_cell(row, 18, str(chat_id))
+                logger.info(f"✅ Google Sheets updated for {user_id} (Consult): {next_msg} at {run_date}")
+        except Exception as e:
+            logger.error(f"❌ Failed to update Google Sheets consult schedule for {user_id}: {e}")
+
+    def clear_consultation_sheet_schedule(self, user_id):
+        """Clears the consultation schedule in Google Sheets (Cols P, Q)."""
+        if not self.google_sheets:
+            return
+        try:
+            worksheet = self.google_sheets.worksheet("Users")
+            cell = worksheet.find(str(user_id), in_column=1)
+            if cell:
+                row = cell.row
+                worksheet.update_cell(row, 16, "")
+                worksheet.update_cell(row, 17, "")
+                logger.info(f"✅ Google Sheets consult schedule cleared for {user_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to clear Google Sheets consult schedule for {user_id}: {e}")
+
     def clear_sheet_schedule(self, user_id):
         if not self.google_sheets:
             return
@@ -431,7 +487,7 @@ class FollowUpScheduler:
         return self.custom_follow_up.get(message_key)
 
     def dispatch_due_messages_from_sheet(self):
-        """Проверяет таблицу и отправляет просроченные сообщения (надежный диспетчер)."""
+        """Checks the sheet and sends overdue messages (Funnel & Consultation)."""
         if not self.google_sheets:
             return
 
@@ -451,47 +507,79 @@ class FollowUpScheduler:
                 user_id_val = record.get("User ID")
                 if not user_id_val:
                     continue
+                
+                # Safe casting
+                try:
+                    user_id = int(user_id_val)
+                except Exception:
+                    user_id = user_id_val
 
+                chat_id_val = record_get(record, "Chat ID") or user_id_val
+                try:
+                    chat_id = int(chat_id_val)
+                except Exception:
+                    chat_id = chat_id_val
+
+                row_num = idx + 2
+
+                # --- 1. MAIN FUNNEL (Columns J, K) ---
                 next_msg = str(record_get(record, "Next Scheduled Message", "Next Msg")).strip()
                 run_date_str = str(record_get(record, "Run Date", "Time")).strip()
-                chat_id_val = record_get(record, "Chat ID") or user_id_val
 
-                if not next_msg or not run_date_str:
-                    continue
-
-                try:
-                    run_date = datetime.strptime(run_date_str, "%Y-%m-%d %H:%M:%S")
-                    run_date = self.tz.localize(run_date)
-                except Exception:
-                    logger.error(f"Некорректная дата в строке {idx + 2}: {run_date_str}")
-                    continue
-
-                if run_date <= now:
-                    row_num = idx + 2
-                    # Очищаем ячейки ДО отправки, чтобы избежать повторов
-                    worksheet.update(values=[["", ""]], range_name=f'J{row_num}:K{row_num}')
-
+                if next_msg and run_date_str:
                     try:
-                        user_id = int(user_id_val)
-                    except Exception:
-                        user_id = user_id_val
+                        run_date = datetime.strptime(run_date_str, "%Y-%m-%d %H:%M:%S")
+                        run_date = self.tz.localize(run_date)
+                        
+                        if run_date <= now:
+                            # Send message
+                            if not self.is_stopped(user_id):
+                                # Clear cells BEFORE sending
+                                worksheet.update(values=[["", ""]], range_name=f'J{row_num}:K{row_num}')
+                                
+                                sent = self.send_message_job(user_id, chat_id, next_msg, schedule_next=False)
+                                if sent:
+                                    plan = self.get_next_plan(next_msg)
+                                    if plan:
+                                        next_key, delay = plan
+                                        next_run = datetime.now(self.tz) + timedelta(minutes=delay)
+                                        self.update_sheet_schedule(user_id, next_key, next_run, chat_id=chat_id)
+                                    else:
+                                        logger.info(f"Funnel ended for {user_id} after {next_msg}")
+                    except Exception as e:
+                        logger.error(f"Error processing funnel row {row_num}: {e}")
 
+                # --- 2. CONSULTATION FOLLOW-UP (Columns P, Q) ---
+                consult_msg = str(record_get(record, "Consult Next Msg")).strip()
+                consult_date_str = str(record_get(record, "Consult Time")).strip()
+
+                if consult_msg and consult_date_str:
                     try:
-                        chat_id = int(chat_id_val)
-                    except Exception:
-                        chat_id = chat_id_val
+                        consult_date = datetime.strptime(consult_date_str, "%Y-%m-%d %H:%M:%S")
+                        consult_date = self.tz.localize(consult_date)
 
-                    if self.is_stopped(user_id):
-                        continue
+                        if consult_date <= now:
+                            # Check stop flag? Ideally consult reminders should be sent regardless, 
+                            # but keeping consistent behavior (if user blocked bot, checked inside send_message_job usually, but is_stopped is internal flag)
+                            if not self.is_stopped(user_id):
+                                # Clear cells (P, Q)
+                                worksheet.update(values=[["", ""]], range_name=f'P{row_num}:Q{row_num}')
+                                
+                                # Send message
+                                self.send_consultation_message_job(user_id, chat_id, consult_msg)
+                    except Exception as e:
+                        logger.error(f"Error processing consult row {row_num}: {e}")
 
-                    sent = self.send_message_job(user_id, chat_id, next_msg, schedule_next=False)
-                    if not sent:
-                        continue
-
-                    plan = self.get_next_plan(next_msg)
-                    if plan:
-                        next_key, delay_minutes = plan
-                        next_run = now + timedelta(minutes=delay_minutes)
-                        self.update_sheet_schedule(user_id, next_key, next_run, chat_id=chat_id)
         except Exception as e:
-            logger.error(f"Ошибка диспетчера таблицы: {e}")
+            logger.error(f"Scheduler Dispatch Error: {e}")
+
+    def send_consultation_message_job(self, user_id, chat_id, message_key):
+        """Sends a consultation message and updates consultation schedule."""
+        sent = self.send_message_job(user_id, chat_id, message_key, schedule_next=False)
+        if sent:
+             # Check if there is a next step for this consultation message
+             plan = self.get_next_plan(message_key)
+             if plan:
+                 next_key, delay = plan
+                 next_run = datetime.now(self.tz) + timedelta(minutes=delay)
+                 self.update_consultation_sheet_schedule(user_id, next_key, next_run, chat_id=chat_id)
