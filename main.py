@@ -14,6 +14,8 @@ import re
 import telebot
 import json
 import logging
+import requests
+import io
 from datetime import datetime, timedelta
 from flask import Flask, request
 from dotenv import load_dotenv
@@ -69,18 +71,15 @@ FILE_5_MISTAKES = (
     "bot-files/5%20mistakes%20of%20managers.pdf?v=20260209"
 )
 FILE_CHECKLIST = (
-    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Check%20list%2010%20ways.pdf?v=20260209"
+    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Check%20list%2010%20ways.pdf?v=20260209"
 )
 
 FILE_CASE_DEUTSCHER = (
-    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Case%20Deutscher%20Agent.pdf?v=20260209"
+    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Case%20Deutscher%20Agent.pdf?v=20260209"
 )
 
 FILE_AVTOVORONKI = (
-    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Avtovoronki%20AI2BIZ.pdf?v=20260209"
+    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Avtovoronki%20AI2BIZ.pdf?v=20260209"
 )
 
 FILE_AI = (
@@ -207,6 +206,24 @@ def safe_send_message(chat_id, text, **kwargs):
             return bot.send_message(chat_id, text, **kwargs)
         except Exception:
             return None
+
+def download_and_send_document(chat_id, url, caption=None, parse_mode="HTML"):
+    """Скачивает файл по ссылке и отправляет его как документ (байты), обходя кэш Telegram."""
+    try:
+        response = requests.get(url, stream=True, timeout=30)
+        response.raise_for_status()
+        
+        # Используем имя файла из URL или задаем стандартное
+        filename = url.split('/')[-1].split('?')[0] or "document.pdf"
+        
+        # Создаем поток в памяти
+        file_io = io.BytesIO(response.content)
+        file_io.name = filename
+        
+        return bot.send_document(chat_id, file_io, caption=caption, parse_mode=parse_mode)
+    except Exception as e:
+        logger.error(f"Ошибка download_and_send_document: {e}")
+        return None
 
 # ===== GOOGLE SHEETS ФУНКЦИИ =====
 def save_to_google_sheets(sheet_name, row_data):
@@ -1020,7 +1037,7 @@ def send_checklist_file(user_id, chat_id):
         # Текст из message_file_checklist (Message 4.1)
         caption = MESSAGES.get("message_file_checklist", {}).get("text", "Ваш чеклист 📂")
         
-        doc_msg = bot.send_document(
+        doc_msg = download_and_send_document(
             chat_id, FILE_CHECKLIST, caption=caption, parse_mode="HTML"
         )
         if doc_msg:
@@ -1170,7 +1187,7 @@ def send_case_file(user_id, chat_id):
         # Текст из message_case_presentation
         caption = MESSAGES.get("message_case_presentation", {}).get("text", "Ваш кейс 📂")
         
-        doc_msg = bot.send_document(
+        doc_msg = download_and_send_document(
             chat_id, FILE_CASE_DEUTSCHER, caption=caption, parse_mode="HTML"
         )
         if doc_msg:
@@ -1194,7 +1211,7 @@ def send_avtovoronki_file(user_id, chat_id):
 
     try:
         caption = MESSAGES.get("message_file_avtovoronki", {}).get("text", "Ваш гайд по автоворонкам 📂")
-        doc_msg = bot.send_document(chat_id, FILE_AVTOVORONKI, caption=caption, parse_mode="HTML")
+        doc_msg = download_and_send_document(chat_id, FILE_AVTOVORONKI, caption=caption, parse_mode="HTML")
         if doc_msg:
             save_message_history(user_id, doc_msg.message_id)
         log_action(user_id, name, "AVTOVORONKI_SENT", "Гайд по автоворонкам отправлен")
@@ -1210,7 +1227,7 @@ def send_ai_file(user_id, chat_id):
 
     try:
         caption = MESSAGES.get("message_file_ai", {}).get("text", "Ваш гайд по ИИ 🤖")
-        doc_msg = bot.send_document(chat_id, FILE_AI, caption=caption, parse_mode="HTML")
+        doc_msg = download_and_send_document(chat_id, FILE_AI, caption=caption, parse_mode="HTML")
         if doc_msg:
             save_message_history(user_id, doc_msg.message_id)
         log_action(user_id, name, "AI_GUIDE_SENT", "Гайд по ИИ отправлен")
