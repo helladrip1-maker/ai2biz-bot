@@ -293,6 +293,9 @@ class FollowUpScheduler:
             id=job_id,
             replace_existing=True
         )
+        # Синхронизация с таблицей для надежности
+        if self.use_sheet_queue:
+            self.update_sheet_schedule(user_id, step_key, run_date, chat_id=chat_id)
 
     def cancel_consultation_followups(self, user_id):
         """Отменяет все текущие задачи-напоминания для анкеты консультации."""
@@ -304,7 +307,12 @@ class FollowUpScheduler:
                 except Exception:
                     pass
         # При любой отмене напоминаний - отменяем и восстановление воронки (если юзер ответил)
+        # При любой отмене напоминаний - отменяем и восстановление воронки (если юзер ответил)
         self.cancel_funnel_recovery(user_id)
+        
+        # Очищаем таблицу для этого пользователя (чтобы не висело старое напоминание)
+        if self.use_sheet_queue:
+            self.clear_sheet_schedule(user_id)
 
     def schedule_funnel_recovery(self, user_id, chat_id):
         """Планирует отправку Message 0 через 10 минут для лидов из диплинка."""

@@ -62,7 +62,7 @@ MESSAGES = {
         ),
         "image": "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/A4%20-%2012.jpg?v=20251227",
         "buttons": [
-            [{"text": "📞 Консультация", "callback_data": "start_form"}, {"text": "🎬 Смотреть Кейс", "callback_data": "examples"}] 
+            [{"text": "📞 Консультация", "callback_data": "consultation"}, {"text": "🎬 Смотреть Кейс", "callback_data": "examples"}] 
         ]
     },
     "message_3": {
@@ -173,7 +173,7 @@ MESSAGES = {
         ),
         "image": "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Slide%2016_9%20-%2061.png?v=20251227",
         "buttons": [
-            [{"text": "💬 Консультация", "callback_data": "start_form"}, {"text": "📊 Изучить кейс", "callback_data": "examples"}]
+            [{"text": "💬 Консультация", "callback_data": "consultation"}, {"text": "📊 Изучить кейс", "callback_data": "examples"}]
         ]
     },
     "message_6": {

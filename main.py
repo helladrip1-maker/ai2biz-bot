@@ -851,6 +851,10 @@ def handle_callback(call):
         elif callback_data == "get_ai_file":
             bot.answer_callback_query(call.id)
             send_ai_file(user_id, chat_id)
+
+        elif callback_data.startswith("consult_"):
+            bot.answer_callback_query(call.id)
+            handle_consultation_callback(call, user_id)
         
         elif callback_data.startswith("answer_"):
             bot.answer_callback_query(call.id)
@@ -1247,18 +1251,23 @@ def ask_consultation_name(message, user_id):
         return
     user_data[user_id]["name"] = name
     duration_text = "⏰ Сколько времени функционирует ваш бизнес?"
-    markup = telebot.types.ReplyKeyboardMarkup(
-        resize_keyboard=True, one_time_keyboard=True
+    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        telebot.types.InlineKeyboardButton("Делаю запуск", callback_data="consult_dur_launch"),
+        telebot.types.InlineKeyboardButton("До 1 года", callback_data="consult_dur_0-1"),
+        telebot.types.InlineKeyboardButton("1-3 года", callback_data="consult_dur_1-3"),
+        telebot.types.InlineKeyboardButton("3-5 лет", callback_data="consult_dur_3-5"),
+        telebot.types.InlineKeyboardButton("Более 5 лет", callback_data="consult_dur_5+"),
     )
-    markup.add("До 1 года", "1-3 года")
-    markup.add("3-5 лет", "Более 5 лет")
     msg = safe_send_message(chat_id, duration_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
         # Планируем дожим для следующего шага
         if scheduler:
             scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_business_duration")
-    user_state[user_id] = "consultation_duration"
+    
+    # Сбрасываем стейт, так как ждем коллбэк
+    user_state[user_id] = None
 
 def ask_consultation_business_duration(message, user_id):
     if check_for_commands(message):
@@ -1388,69 +1397,134 @@ def ask_consultation_business(message, user_id):
 
     user_data[user_id]["business"] = business_desc
     revenue_text = "💰 Какая сейчас выручка в месяц?"
-    markup = telebot.types.ReplyKeyboardMarkup(
-        resize_keyboard=True, one_time_keyboard=True
+    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        telebot.types.InlineKeyboardButton("< 100K", callback_data="consult_rev_0-100k"),
+        telebot.types.InlineKeyboardButton("100K - 300K", callback_data="consult_rev_100-300k"),
+        telebot.types.InlineKeyboardButton("300K - 1M", callback_data="consult_rev_300k-1m"),
+        telebot.types.InlineKeyboardButton("1M - 5M", callback_data="consult_rev_1m-5m"),
+        telebot.types.InlineKeyboardButton("5M+", callback_data="consult_rev_5m+"),
     )
-    markup.add("< 300K", "300K - 1M")
-    markup.add("1M - 5M", "5M+")
     msg = safe_send_message(chat_id, revenue_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
         if scheduler:
             scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_revenue")
-    user_state[user_id] = "consultation_revenue"
+    
+    # Сбрасываем стейт, ждем callback
+    user_state[user_id] = None
 
-def ask_consultation_revenue(message, user_id):
-    if check_for_commands(message):
-        return
-    chat_id = message.chat.id
-    save_message_history(user_id, message.message_id)
-
-    if scheduler:
-        scheduler.cancel_consultation_followups(user_id)
-
-    user_data[user_id]["revenue"] = message.text
-    participants_text = "👥 Кто будет на созвоне?"
-    markup = telebot.types.ReplyKeyboardMarkup(
-        resize_keyboard=True, one_time_keyboard=True
+def send_consultation_contact_prompt(user_id, chat_id):
+    """Отправляет запрос контакта (после выбора длительности)."""
+    user_data[user_id]["business_duration"] = user_data.get(user_id, {}).get("business_duration", "")
+    telegram_text = "📱 Ваш Telegram (@username) или номер телефона начиная с +7"
+    msg = safe_send_message(
+        chat_id, telegram_text, reply_markup=telebot.types.ReplyKeyboardRemove()
     )
-    markup.add("Я один", "Я с бизнес партнером")
-    markup.add("Я не принимаю решений в компании")
+    if msg:
+        save_message_history(user_id, msg.message_id)
+        if scheduler:
+            scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_contact")
+    user_state[user_id] = "consultation_contact"
+
+def send_consultation_participants_question(user_id, chat_id):
+    """Отправляет вопрос про участников (после выручки)."""
+    participants_text = "👥 Кто будет на созвоне?"
+    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        telebot.types.InlineKeyboardButton("Я один", callback_data="consult_part_1"),
+        telebot.types.InlineKeyboardButton("Я с бизнес партнером", callback_data="consult_part_partners"),
+        telebot.types.InlineKeyboardButton("Я не принимаю решений в компании", callback_data="consult_part_employee")
+    )
     msg = safe_send_message(chat_id, participants_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
         if scheduler:
             scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_participants")
-    user_state[user_id] = "consultation_participants"
+    user_state[user_id] = None
 
-def ask_consultation_participants(message, user_id):
-    if check_for_commands(message):
-        return
-    chat_id = message.chat.id
-    save_message_history(user_id, message.message_id)
-
-    if scheduler:
-        scheduler.cancel_consultation_followups(user_id)
-
-    user_data[user_id]["participants"] = message.text
+def send_consultation_time_question(user_id, chat_id):
+    """Отправляет вопрос про время (после участников)."""
     time_text = "🕐 Когда удобно выйти в Zoom?"
-    markup = telebot.types.ReplyKeyboardMarkup(
-        resize_keyboard=True, one_time_keyboard=True
+    markup = telebot.types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        telebot.types.InlineKeyboardButton("Завтра 9-12", callback_data="consult_time_tmrw_am"),
+        telebot.types.InlineKeyboardButton("Завтра 12-18", callback_data="consult_time_tmrw_pm"),
+        telebot.types.InlineKeyboardButton("Послезавтра", callback_data="consult_time_after_tmrw"),
+        telebot.types.InlineKeyboardButton("В выходные", callback_data="consult_time_weekend")
     )
-    markup.add("Завтра 9-12", "Завтра 12-18")
-    markup.add("После завтра", "В выходные")
     msg = safe_send_message(chat_id, time_text, reply_markup=markup)
     if msg:
         save_message_history(user_id, msg.message_id)
         if scheduler:
             scheduler.schedule_consultation_followup(user_id, chat_id, "consult_followup_time")
-    user_state[user_id] = "consultation_time"
+    user_state[user_id] = None
+
+def handle_consultation_callback(call, user_id):
+    """Обрабатывает callback-кнопки анкеты консультации."""
+    data = call.data
+    chat_id = call.message.chat.id
+    
+    # Сбрасываем дожимы при действии юзера
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
+
+    if data.startswith("consult_dur_"):
+        # Выбор длительности -> Спрашиваем контакт
+        val = data.replace("consult_dur_", "")
+        # Маппинг значений для красоты
+        mapping = {
+            "launch": "Делаю запуск",
+            "0-1": "До 1 года",
+            "1-3": "1-3 года",
+            "3-5": "3-5 лет",
+            "5+": "Более 5 лет"
+        }
+        user_data[user_id]["business_duration"] = mapping.get(val, val)
+        send_consultation_contact_prompt(user_id, chat_id)
+        
+    elif data.startswith("consult_rev_"):
+        # Выбор выручки -> Спрашиваем участников
+        val = data.replace("consult_rev_", "")
+        user_data[user_id]["revenue"] = val
+        send_consultation_participants_question(user_id, chat_id)
+        
+    elif data.startswith("consult_part_"):
+        # Выбор участников -> Спрашиваем время
+        val = data.replace("consult_part_", "")
+        mapping = {
+            "1": "Я один",
+            "partners": "Я с бизнес партнером",
+            "employee": "Я не принимаю решений в компании"
+        }
+        user_data[user_id]["participants"] = mapping.get(val, val)
+        send_consultation_time_question(user_id, chat_id)
+
+    elif data.startswith("consult_time_"):
+        # Выбор времени -> Финиш
+        val = data.replace("consult_time_", "")
+        mapping = {
+            "tmrw_am": "Завтра 9-12",
+            "tmrw_pm": "Завтра 12-18",
+            "after_tmrw": "Послезавтра",
+            "weekend": "В выходные"
+        }
+        user_data[user_id]["time"] = mapping.get(val, val)
+        # Вызываем финиш
+        finish_form_consultation(call.message, user_id)
 
 def finish_form_consultation(message, user_id):
-    if check_for_commands(message):
-        return
-    user_data[user_id]["zoom_time"] = message.text
+    # Если данные уже есть (из callback), не перезаписываем их текстом сообщения (которое может быть командой или промптом)
+    if not user_data.get(user_id, {}).get("time"):    
+        if check_for_commands(message):
+            return
+        user_data.setdefault(user_id, {})["zoom_time"] = message.text
+        user_data[user_id]["time"] = message.text # Для совместимости
+
     app_data = user_data[user_id]
+    # Используем time, так как zoom_time может быть не установлен если пришли из callback
+    final_time = app_data.get("time") or app_data.get("zoom_time")
+    
     chat_id = message.chat.id
     save_message_history(user_id, message.message_id)
 
@@ -1472,7 +1546,7 @@ def finish_form_consultation(message, user_id):
         f"👤 *{app_data.get('name')}*\n"
         f"📧 {app_data.get('email')}\n"
         f"📱 {app_data.get('telegram') or app_data.get('phone')}\n"
-        f"🕐 Предпочитаемое время: {app_data.get('zoom_time')}\n\n"
+        f"🕐 Предпочитаемое время: {final_time}\n\n"
         "⏳ *Менеджер AI2BIZ свяжется с вами в течение часа* и согласует точное время встречи.\n\n"
         "📍 *На консультации разберем:*\n"
         "• где теряются лиды\n"
