@@ -6,5 +6,3 @@ gunicorn==21.2.0
 google-auth==2.25.2
 APScheduler==3.10.4
 pytz==2024.1
-requests==2.31.0
-
