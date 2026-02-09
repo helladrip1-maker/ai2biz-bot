@@ -1590,6 +1590,18 @@ def index():
 print("✅ STARTUP: AI2BIZ Bot v8.1 (Gunicorn Fix) Инициализация...")
 load_file_cache()
 
+# ===== WEBHOOK SETUP =====
+# Force webhook registration to ensure this instance receives updates
+WEBHOOK_URL_FULL = WEBHOOK_URL + TOKEN
+try:
+    logger.info(f"Setting webhook to: {WEBHOOK_URL_FULL}")
+    bot.remove_webhook()
+    time.sleep(1)
+    bot.set_webhook(url=WEBHOOK_URL_FULL)
+    logger.info("✅ Webhook set successfully")
+except Exception as e:
+    logger.error(f"❌ Failed to set webhook: {e}")
+
 # ===== ЗАПУСК (Только локально) =====
 if __name__ == "__main__":
     print("✅ LOCAL: AI2BIZ Bot v8.1 запушен локально.")
