@@ -1015,6 +1015,11 @@ def finish_diagnostic_form(chat_id, user_id, message_id):
     safe_send_message(chat_id, "Хотите записаться на консультацию?", reply_markup=markup)
     
     # Сбрасываем состояние, НО НЕ ВОЗОБНОВЛЯЕМ ВОРОНКУ (т.к. анкету заполнили)
+    if scheduler:
+        scheduler.cancel_consultation_followups(user_id)
+        # ВАЖНО: Останавливаем основную воронку (message 0-7), так как квалификация пройдена
+        scheduler.stop_funnel(user_id)
+        
     reset_user_state(user_id, resume=False)
 
 def send_checklist_file(user_id, chat_id):
