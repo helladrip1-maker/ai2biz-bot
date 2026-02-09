@@ -1509,7 +1509,11 @@ def index():
 # This ensures gunicorn workers register the webhook
 WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 if WEBHOOK_URL and TOKEN:
-    WEBHOOK_URL_FULL = WEBHOOK_URL + "/telegram-webhook"
+    if WEBHOOK_URL.endswith("/telegram-webhook"):
+        WEBHOOK_URL_FULL = WEBHOOK_URL
+    else:
+        WEBHOOK_URL_FULL = WEBHOOK_URL + "/telegram-webhook"
+        
     try:
         logger.info(f"Setting webhook to: {WEBHOOK_URL_FULL}")
         bot.remove_webhook()
