@@ -323,27 +323,48 @@ def create_or_update_user(user_id, username, first_name, action="", state="", ch
 
             logger.info(f"✅ Обновлена запись пользователя {user_id}")
         except Exception:
-            # Создаем новую запись со всеми полями (включая пустые для планировщика)
-            worksheet.append_row([
-                str(user_id),
-                username or "",
-                first_name or "",
-                timestamp,
-                action,
-                state,
-                lead_source or "",  # Lead Source
-                action or "",
-                state or "initial",
-                "",  # Lead Quality
-                "",  # Answers
-                "0", # Messages Sent
-                "",  # Next Scheduled Message (col 10)
-                "",  # Run Date (col 11)
-                str(chat_id) if chat_id is not None else "",  # Chat ID (col 12)
-                "",  # Last Sent Message (col 13)
-                "",  # Last Sent At (col 14)
-                ""   # Last Send Status (col 15)
-            ])
+            # Создаем новую запись со всеми полями
+            # Порядок колонок согласно init_google_sheets:
+            # 1: User ID
+            # 2: Username
+            # 3: Name
+            # 4: Started
+            # 5: Last Action
+            # 6: State
+            # 7: Lead Source
+            # 8: Deep Link
+            # 9: Archive URL
+            # 10: Next Scheduled Message
+            # 11: Run Date
+            # 12: Chat ID
+            # 13: Last Sent Message
+            # 14: Last Sent At
+            # 15: Last Send Status
+            # 16: Consult Next Msg
+            # 17: Consult Time
+            # 18: Consult Chat ID
+            
+            new_row = [
+                str(user_id),                   # 1
+                username or "",                 # 2
+                first_name or "",               # 3
+                timestamp,                      # 4
+                action or "",                   # 5
+                state or "initial",             # 6
+                lead_source or "",              # 7
+                "",                             # 8 (Deep Link)
+                "",                             # 9 (Archive URL)
+                "",                             # 10
+                "",                             # 11
+                str(chat_id) if chat_id else "",# 12
+                "",                             # 13
+                "",                             # 14
+                "",                             # 15
+                "",                             # 16
+                "",                             # 17
+                ""                              # 18
+            ]
+            worksheet.append_row(new_row)
             logger.info(f"✅ Создана запись пользователя {user_id}")
         
         return True
