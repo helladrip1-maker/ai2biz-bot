@@ -1583,10 +1583,14 @@ def index():
         "\n\nАвтоворонка: Включена"
     )
 
-# ===== ЗАПУСК =====
+
+# ===== ИНИЦИАЛИЗАЦИЯ (Работает и при импорте в Gunicorn) =====
+print("✅ STARTUP: AI2BIZ Bot v8.1 (Gunicorn Fix) Инициализация...")
+load_file_cache()
+
+# ===== ЗАПУСК (Только локально) =====
 if __name__ == "__main__":
-    print("✅ AI2BIZ Bot v8.1 (Cache Fix) запущен.")
-    load_file_cache() # Загружаем кэш при старте
+    print("✅ LOCAL: AI2BIZ Bot v8.1 запушен локально.")
     if not GSPREAD_AVAILABLE:
         print("⚠️ gspread не установлен. Добавьте в requirements.txt и выполните redeploy.")
     if scheduler:
