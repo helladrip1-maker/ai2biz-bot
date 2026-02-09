@@ -580,16 +580,15 @@ def check_for_commands(message):
     if not message.text:
         return False
     text = message.text.strip()
+    logger.info(f"DEBUG_CHECK_COMMANDS: '{text}' (len={len(text)})")
     if text == "/cancel":
         process_cancel_command(message)
         return True
     if text == "/help":
         process_help_command(message)
         return True
-    if text == "/help":
-        process_help_command(message)
-        return True
     if text == "/refresh_files":
+        logger.info(f"MATCHED REFRESH_FILES COMMAND: {text}")
         process_refresh_files_command(message)
         return True
     return False
