@@ -558,10 +558,15 @@ def process_help_command(message):
         save_message_history(user_id, msg.message_id)
     send_old_menu(message)
 
+# ===== /REFRESH_FILES =====
+@bot.message_handler(commands=["refresh_files"])
 def process_refresh_files_command(message):
     """Обрабатывает команду /refresh_files (только админ)."""
     user_id = message.from_user.id
+    logger.info(f"🔄 Команда /refresh_files от {user_id}. ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
+    
     if user_id != ADMIN_CHAT_ID:
+        bot.reply_to(message, f"⛔ Доступ запрещен. Ваш ID: {user_id}. Требуется: {ADMIN_CHAT_ID}")
         return
     
     global FILE_CACHE
@@ -581,9 +586,10 @@ def check_for_commands(message):
     if text == "/help":
         process_help_command(message)
         return True
-    if text == "/refresh_files":
-        process_refresh_files_command(message)
+    if text == "/help":
+        process_help_command(message)
         return True
+    return False
     return False
 
 def build_inline_keyboard(buttons_config):
