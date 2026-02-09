@@ -331,9 +331,9 @@ def create_or_update_user(user_id, username, first_name, action="", state="", ch
             # 4: Started
             # 5: Last Action
             # 6: State
-            # 7: Lead Source
-            # 8: Deep Link
-            # 9: Archive URL
+            # 7: Lead Quality / Source
+            # 8: Answers
+            # 9: Messages Sent
             # 10: Next Scheduled Message
             # 11: Run Date
             # 12: Chat ID
@@ -345,18 +345,18 @@ def create_or_update_user(user_id, username, first_name, action="", state="", ch
             # 18: Consult Chat ID
             
             new_row = [
-                str(user_id),                   # 1
-                username or "",                 # 2
-                first_name or "",               # 3
-                timestamp,                      # 4
-                action or "",                   # 5
-                state or "initial",             # 6
-                lead_source or "",              # 7
-                "",                             # 8 (Deep Link)
-                "",                             # 9 (Archive URL)
+                str(user_id),                   # 1 (User ID)
+                username or "",                 # 2 (B)
+                first_name or "",               # 3 (C)
+                timestamp,                      # 4 (D)
+                action or "",                   # 5 (E)
+                state or "initial",             # 6 (F)
+                lead_source or "",              # 7 (G - Lead Quality/Source)
+                "",                             # 8 (H - Answers)
+                "0",                            # 9 (I - Messages Sent)
                 "",                             # 10
                 "",                             # 11
-                str(chat_id) if chat_id else "",# 12
+                str(chat_id) if chat_id else "",# 12 (L - Chat ID)
                 "",                             # 13
                 "",                             # 14
                 "",                             # 15
@@ -364,6 +364,7 @@ def create_or_update_user(user_id, username, first_name, action="", state="", ch
                 "",                             # 17
                 ""                              # 18
             ]
+            logger.info(f"Adding new user row: {new_row}")
             worksheet.append_row(new_row)
             logger.info(f"✅ Создана запись пользователя {user_id}")
         
