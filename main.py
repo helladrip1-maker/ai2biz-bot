@@ -69,83 +69,23 @@ FILE_5_MISTAKES = (
     "bot-files/5%20mistakes%20of%20managers.pdf?v=20251227"
 )
 FILE_CHECKLIST = (
-    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Check-list%20AI2BIZ.pdf?v=20260209"
+    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/Check-list%20AI2BIZ.pdf"
 )
 
 FILE_CASE_DEUTSCHER = (
-    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/%20Case%20Deutscher%20Agent%20AI2BIZ.pdf?v=20260209"
+    "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/bot-files/%20Case%20Deutscher%20Agent%20AI2BIZ.pdf"
 )
 
 FILE_AVTOVORONKI = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/Avtovoronki%20AI2BIZ.pdf?v=20260209"
+    "bot-files/Avtovoronki%20AI2BIZ.pdf?v=20251227"
 )
 
 FILE_AI = (
     "https://kbijiiabluexmotyhaez.supabase.co/storage/v1/object/public/"
-    "bot-files/AI%20for%20Business%20AI2BIZ.pdf?v=20260209"
+    "bot-files/AI%20for%20Business%20AI2BIZ.pdf?v=20251227"
 )
 
-FILE_CACHE_PATH = "file_cache.json"
-FILE_CACHE = {}
-
-def load_file_cache():
-    """Загружает кэш file_id из файла."""
-    global FILE_CACHE
-    if os.path.exists(FILE_CACHE_PATH):
-        try:
-            with open(FILE_CACHE_PATH, "r") as f:
-                FILE_CACHE = json.load(f)
-            print(f"✅ Кэш файлов загружен: {len(FILE_CACHE)} файлов")
-        except Exception as e:
-            print(f"⚠️ Ошибка загрузки кэша: {e}")
-            FILE_CACHE = {}
-    else:
-        FILE_CACHE = {}
-
-def save_file_cache():
-    """Сохраняет кэш file_id в файл."""
-    try:
-        with open(FILE_CACHE_PATH, "w") as f:
-            json.dump(FILE_CACHE, f)
-    except Exception as e:
-        logger.error(f"❌ Ошибка сохранения кэша: {e}")
-
-def send_cached_document(chat_id, file_url, caption=None, parse_mode=None):
-    """
-    Отправляет документ, используя кэшированный file_id если есть.
-    Если нет - отправляет по URL и сохраняет file_id.
-    """
-    file_id = FILE_CACHE.get(file_url)
-    sent_msg = None
-    
-    # 1. Пробуем отправить по file_id
-    if file_id:
-        try:
-            logger.info(f"📤 Отправка файла из кэша: {file_url[:30]}...")
-            sent_msg = bot.send_document(chat_id, file_id, caption=caption, parse_mode=parse_mode)
-            return sent_msg
-        except Exception as e:
-            logger.warning(f"⚠️ Ошибка отправки по file_id (возможно устарел): {e}")
-            # Если ошибка - удаляем из кэша и пробуем по URL
-            FILE_CACHE.pop(file_url, None)
-            save_file_cache()
-
-    # 2. Отправляем по URL (если нет в кэше или ошибка)
-    try:
-        logger.info(f"🌐 Скачивание и отправка файла: {file_url[:30]}...")
-        sent_msg = bot.send_document(chat_id, file_url, caption=caption, parse_mode=parse_mode)
-        
-        # 3. Сохраняем file_id в кэш
-        if sent_msg and sent_msg.document:
-            FILE_CACHE[file_url] = sent_msg.document.file_id
-            save_file_cache()
-            logger.info("✅ file_id сохранен в кэш")
-            
-        return sent_msg
-    except Exception as e:
-        logger.error(f"❌ Ошибка отправки документа по URL: {e}")
-        return None
 
 bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
@@ -558,38 +498,16 @@ def process_help_command(message):
         save_message_history(user_id, msg.message_id)
     send_old_menu(message)
 
-# ===== /REFRESH_FILES =====
-@bot.message_handler(commands=["refresh_files"])
-def process_refresh_files_command(message):
-    """Обрабатывает команду /refresh_files (только админ)."""
-    user_id = message.from_user.id
-    logger.info(f"🔄 Команда /refresh_files от {user_id}. ADMIN_CHAT_ID={ADMIN_CHAT_ID}")
-    
-    if user_id != ADMIN_CHAT_ID:
-        bot.reply_to(message, f"⛔ Доступ запрещен. Ваш ID: {user_id}. Требуется: {ADMIN_CHAT_ID}")
-        return
-    
-    global FILE_CACHE
-    FILE_CACHE = {}
-    save_file_cache()
-    bot.reply_to(message, "♻️ Кэш файлов очищен. Следующая отправка заново скачает файлы с сервера.")
-
-
 def check_for_commands(message):
     """Проверяет /cancel или /help."""
     if not message.text:
         return False
     text = message.text.strip()
-    logger.info(f"DEBUG_CHECK_COMMANDS: '{text}' (len={len(text)})")
     if text == "/cancel":
         process_cancel_command(message)
         return True
     if text == "/help":
         process_help_command(message)
-        return True
-    if text == "/refresh_files":
-        logger.info(f"MATCHED REFRESH_FILES COMMAND: {text}")
-        process_refresh_files_command(message)
         return True
     return False
 
@@ -1100,7 +1018,7 @@ def send_checklist_file(user_id, chat_id):
         # Текст из message_file_checklist (Message 4.1)
         caption = MESSAGES.get("message_file_checklist", {}).get("text", "Ваш чеклист 📂")
         
-        doc_msg = send_cached_document(
+        doc_msg = bot.send_document(
             chat_id, FILE_CHECKLIST, caption=caption, parse_mode="HTML"
         )
         if doc_msg:
@@ -1250,7 +1168,7 @@ def send_case_file(user_id, chat_id):
         # Текст из message_case_presentation
         caption = MESSAGES.get("message_case_presentation", {}).get("text", "Ваш кейс 📂")
         
-        doc_msg = send_cached_document(
+        doc_msg = bot.send_document(
             chat_id, FILE_CASE_DEUTSCHER, caption=caption, parse_mode="HTML"
         )
         if doc_msg:
@@ -1274,7 +1192,7 @@ def send_avtovoronki_file(user_id, chat_id):
 
     try:
         caption = MESSAGES.get("message_file_avtovoronki", {}).get("text", "Ваш гайд по автоворонкам 📂")
-        doc_msg = send_cached_document(chat_id, FILE_AVTOVORONKI, caption=caption, parse_mode="HTML")
+        doc_msg = bot.send_document(chat_id, FILE_AVTOVORONKI, caption=caption, parse_mode="HTML")
         if doc_msg:
             save_message_history(user_id, doc_msg.message_id)
         log_action(user_id, name, "AVTOVORONKI_SENT", "Гайд по автоворонкам отправлен")
@@ -1290,7 +1208,7 @@ def send_ai_file(user_id, chat_id):
 
     try:
         caption = MESSAGES.get("message_file_ai", {}).get("text", "Ваш гайд по ИИ 🤖")
-        doc_msg = send_cached_document(chat_id, FILE_AI, caption=caption, parse_mode="HTML")
+        doc_msg = bot.send_document(chat_id, FILE_AI, caption=caption, parse_mode="HTML")
         if doc_msg:
             save_message_history(user_id, doc_msg.message_id)
         log_action(user_id, name, "AI_GUIDE_SENT", "Гайд по ИИ отправлен")
@@ -1585,14 +1503,9 @@ def index():
         "\n\nАвтоворонка: Включена"
     )
 
-
-# ===== ИНИЦИАЛИЗАЦИЯ (Работает и при импорте в Gunicorn) =====
-print("✅ STARTUP: AI2BIZ Bot v8.1 (Gunicorn Fix) Инициализация...")
-load_file_cache()
-
-# ===== ЗАПУСК (Только локально) =====
+# ===== ЗАПУСК =====
 if __name__ == "__main__":
-    print("✅ LOCAL: AI2BIZ Bot v8.1 запушен локально.")
+    print("✅ AI2BIZ Bot v8.0 Autofunnel запущен.")
     if not GSPREAD_AVAILABLE:
         print("⚠️ gspread не установлен. Добавьте в requirements.txt и выполните redeploy.")
     if scheduler:
