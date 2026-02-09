@@ -113,39 +113,43 @@ def init_google_sheets():
         try:
             sheet.worksheet("Users")
         except Exception:
+            # Создаем новый лист
             worksheet = sheet.add_worksheet("Users", 1000, 20)
-            worksheet.append_row([
+            # Используем update с явным диапазоном A1:T1 вместо append_row
+            # Это гарантирует, что заголовки всегда будут в столбцах A-T
+            worksheet.update('A1:T1', [[
                 "User ID", "Username", "Name", "Started", 
                 "Last Action", "State", "Lead Quality", "Answers", "Messages Sent",
                 "Next Scheduled Message", "Run Date", "Chat ID",
                 "Last Sent Message", "Last Sent At", "Last Send Status",
                 "Consult Next Message", "Consult Run Date", "Last Activity",
                 "Consult Form State", "Form Completed At"
-            ])
-            print("✅ Создан лист Users")
+            ]])
+            print("✅ Создан лист Users с заголовками в A1:T1")
         else:
-            # Обновляем заголовок, если отсутствуют новые столбцы
+            # Лист существует - проверяем и обновляем заголовки
             try:
                 worksheet = sheet.worksheet("Users")
                 headers = worksheet.row_values(1)
-                if "Chat ID" not in headers:
-                    worksheet.update_cell(1, 12, "Chat ID")
-                if "Last Sent Message" not in headers:
-                    worksheet.update_cell(1, 13, "Last Sent Message")
-                if "Last Sent At" not in headers:
-                    worksheet.update_cell(1, 14, "Last Sent At")
-                if "Last Send Status" not in headers:
-                    worksheet.update_cell(1, 15, "Last Send Status")
-                if "Consult Next Message" not in headers:
-                    worksheet.update_cell(1, 16, "Consult Next Message")
-                if "Consult Run Date" not in headers:
-                    worksheet.update_cell(1, 17, "Consult Run Date")
-                if "Last Activity" not in headers:
-                    worksheet.update_cell(1, 18, "Last Activity")
-                if "Consult Form State" not in headers:
-                    worksheet.update_cell(1, 19, "Consult Form State")
-                if "Form Completed At" not in headers:
-                    worksheet.update_cell(1, 20, "Form Completed At")
+                
+                # КРИТИЧЕСКАЯ ПРОВЕРКА: заголовки должны начинаться с A1
+                if headers and headers[0] != "User ID":
+                    logger.warning(f"⚠️ ВНИМАНИЕ: Заголовки смещены! Первый заголовок: '{headers[0]}'")
+                    logger.warning("⚠️ Ожидается 'User ID' в ячейке A1")
+                    logger.warning("⚠️ Пожалуйста, удалите столбцы A-H в Google Sheets и перезапустите бота")
+                    print(f"⚠️ КРИТИЧЕСКАЯ ОШИБКА: Заголовки смещены! Первый заголовок: '{headers[0]}' вместо 'User ID'")
+                
+                # Обновляем заголовки с использованием явного диапазона
+                # Это исправит смещение, если оно есть
+                worksheet.update('A1:T1', [[
+                    "User ID", "Username", "Name", "Started", 
+                    "Last Action", "State", "Lead Quality", "Answers", "Messages Sent",
+                    "Next Scheduled Message", "Run Date", "Chat ID",
+                    "Last Sent Message", "Last Sent At", "Last Send Status",
+                    "Consult Next Message", "Consult Run Date", "Last Activity",
+                    "Consult Form State", "Form Completed At"
+                ]])
+                print("✅ Заголовки обновлены в диапазоне A1:T1")
             except Exception:
                 pass
         
@@ -237,6 +241,53 @@ def save_to_google_sheets(sheet_name, row_data):
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения: {e}")
         return False
+
+def verify_sheet_structure():
+    """Проверяет корректность структуры Google Sheets при запуске."""
+    if not google_sheets:
+        return False
+    
+    try:
+        worksheet = google_sheets.worksheet("Users")
+        headers = worksheet.row_values(1)
+        
+        expected_first_header = "User ID"
+        if not headers:
+            logger.error("❌ КРИТИЧЕСКАЯ ОШИБКА: Заголовки отсутствуют в Google Sheets!")
+            return False
+        
+        if headers[0] != expected_first_header:
+            logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Заголовки смещены!")
+            logger.error(f"   Ожидается '{expected_first_header}' в ячейке A1")
+            logger.error(f"   Получено: '{headers[0]}'")
+            logger.error("   Решение: Удалите столбцы A-H в Google Sheets и перезапустите бота")
+            print(f"\n{'='*60}")
+            print(f"⚠️  КРИТИЧЕСКАЯ ОШИБКА СТРУКТУРЫ GOOGLE SHEETS")
+            print(f"{'='*60}")
+            print(f"Первый заголовок: '{headers[0]}' (ожидается 'User ID')")
+            print(f"Заголовки смещены! Данные будут записаны неправильно.")
+            print(f"\nРЕШЕНИЕ:")
+            print(f"1. Откройте Google Sheets")
+            print(f"2. Удалите столбцы A-H")
+            print(f"3. Убедитесь, что 'User ID' в ячейке A1")
+            print(f"4. Перезапустите бота")
+            print(f"{'='*60}\n")
+            return False
+        
+        # Проверяем количество столбцов
+        expected_columns = 20
+        if len(headers) < expected_columns:
+            logger.warning(f"⚠️ Недостаточно столбцов: {len(headers)}/{expected_columns}")
+            logger.info("Заголовки будут обновлены автоматически")
+        
+        logger.info(f"✅ Структура Google Sheets корректна (столбцов: {len(headers)})")
+        logger.info(f"   Первый заголовок: '{headers[0]}' ✓")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка проверки структуры Google Sheets: {e}")
+        return False
+
 
 def create_or_update_user(user_id, username, first_name, action="", state="", chat_id=None, lead_source=None):
     """Создает или обновляет запись пользователя в Google Sheets."""
@@ -1734,6 +1785,14 @@ if __name__ == "__main__":
     print("✅ AI2BIZ Bot v8.0 Autofunnel запущен.")
     if not GSPREAD_AVAILABLE:
         print("⚠️ gspread не установлен. Добавьте в requirements.txt и выполните redeploy.")
+    
+    # Проверяем структуру Google Sheets
+    print("\n🔍 Проверка структуры Google Sheets...")
+    if google_sheets:
+        verify_sheet_structure()
+    else:
+        print("⚠️ Google Sheets не инициализирован")
+    
     if scheduler:
         print("✅ Scheduler для дожимов активен")
         scheduler.recovery_callback = recovery_handler
