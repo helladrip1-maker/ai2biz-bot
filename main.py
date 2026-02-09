@@ -15,6 +15,7 @@ import telebot
 import json
 import logging
 from datetime import datetime, timedelta
+import time
 from flask import Flask, request
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -1502,6 +1503,22 @@ def index():
         "\n\nКоманды: /start, /help, /cancel, /commands"
         "\n\nАвтоворонка: Включена"
     )
+
+# ===== WEBHOOK SETUP =====
+# Force webhook registration (Run on import/startup)
+# This ensures gunicorn workers register the webhook
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+if WEBHOOK_URL and TOKEN:
+    WEBHOOK_URL_FULL = WEBHOOK_URL + "/telegram-webhook"
+    try:
+        logger.info(f"Setting webhook to: {WEBHOOK_URL_FULL}")
+        bot.remove_webhook()
+        time.sleep(1)
+        # Drop pending updates to avoid processing old messages
+        bot.set_webhook(url=WEBHOOK_URL_FULL, drop_pending_updates=True) 
+        logger.info("✅ Webhook set successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to set webhook: {e}")
 
 # ===== ЗАПУСК =====
 if __name__ == "__main__":
