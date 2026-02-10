@@ -4,10 +4,41 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 from datetime import datetime, timedelta
 import telebot
+from telebot import apihelper
 import pytz
+import time
 from messages import MESSAGES, FOLLOW_UP_PLAN
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration constants
+MAX_RETRY_ATTEMPTS = 3
+RETRY_DELAYS = [2, 5, 10]  # Minutes between retry attempts (exponential backoff)
+
+# Exception types that warrant retry (connection/network errors)
+# Build tuple dynamically to handle missing imports
+_retry_errors = [
+    ConnectionError,
+    ConnectionResetError,
+    ConnectionAbortedError,
+    ConnectionRefusedError,
+    TimeoutError,
+    OSError,  # Covers network-related OS errors
+]
+
+# Add requests exceptions if available (used by telebot)
+try:
+    import requests
+    _retry_errors.extend([
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+        requests.exceptions.ReadTimeout,
+        requests.exceptions.ChunkedEncodingError,
+    ])
+except ImportError:
+    pass
+
+RETRY_SAFE_ERRORS = tuple(_retry_errors)
 
 class FollowUpScheduler:
     def __init__(self, bot, user_data, google_sheets=None, scheduler_storage=None):
@@ -19,6 +50,8 @@ class FollowUpScheduler:
         # self.scheduler.add_jobstore('sqlalchemy', url='sqlite:///jobs.sqlite')
         self.scheduler.start()
         self.user_stop_flags = {} # user_id -> True/False
+        self._ws_cache = None          # Cached worksheet reference
+        self._row_cache = {}           # user_id -> (row, timestamp)
         self.tz = pytz.timezone("Europe/Moscow")
         self.use_sheet_queue = bool(self.google_sheets)
         self.recovery_callback = None # Коллбэк для восстановления воронки
@@ -42,7 +75,7 @@ class FollowUpScheduler:
             self.scheduler.add_job(
                 self.dispatch_due_messages_from_sheet,
                 trigger="interval",
-                seconds=60,
+                seconds=120,
                 id="sheet_dispatch",
                 replace_existing=True,
                 max_instances=1,
@@ -52,6 +85,24 @@ class FollowUpScheduler:
     def start(self):
         if not self.scheduler.running:
             self.scheduler.start()
+
+    def _get_users_worksheet(self):
+        """Returns cached worksheet reference. Re-fetches on error."""
+        if self._ws_cache is None:
+            self._ws_cache = self.google_sheets.worksheet("Users")
+        return self._ws_cache
+
+    def _find_user_row(self, worksheet, user_id):
+        """Cached user row lookup. Invalidates after 5 minutes."""
+        now = time.time()
+        cached = self._row_cache.get(user_id)
+        if cached and (now - cached[1]) < 300:
+            return cached[0]
+        cell = worksheet.find(str(user_id), in_column=1)
+        if cell:
+            self._row_cache[user_id] = (cell.row, now)
+            return cell.row
+        return None
 
     def schedule_next_message(self, user_id, chat_id, last_message_key):
         """Планирует следующее сообщение на основе текущего."""
@@ -190,11 +241,11 @@ class FollowUpScheduler:
                  # Фолбек: проверяем Google Sheets, если в памяти нет флага (после рестарта)
                  if not is_deeplink and self.use_sheet_queue:
                      try:
-                         worksheet = self.google_sheets.worksheet("Users")
-                         cell = worksheet.find(str(user_id), in_column=1)
-                         if cell:
+                         ws = self._get_users_worksheet()
+                         row = self._find_user_row(ws, user_id)
+                         if row:
                              # Колонка 7 (G) - Lead Source
-                             lead_source_val = worksheet.cell(cell.row, 7).value
+                             lead_source_val = ws.cell(row, 7).value
                              if lead_source_val == "deeplink":
                                  is_deeplink = True
                                  # Восстанавливаем в память
@@ -209,8 +260,23 @@ class FollowUpScheduler:
                      self.schedule_funnel_recovery(user_id, chat_id)
 
             return True
+        except RETRY_SAFE_ERRORS as e:
+            # Connection/network errors - these are retriable
+            logger.warning(f"⚠️ Retriable error sending {message_key} to {user_id}: {type(e).__name__}: {e}")
+            
+            # Get current retry attempt from Google Sheets
+            current_attempt = self.get_retry_attempt(user_id)
+            
+            # Schedule retry with exponential backoff
+            retry_scheduled = self.schedule_retry(user_id, chat_id, message_key, current_attempt)
+            
+            if not retry_scheduled:
+                logger.error(f"❌ Failed to schedule retry for {message_key} to {user_id} (max retries reached)")
+            
+            return False
         except Exception as e:
-            logger.error(f"Ошибка отправки сообщения воронки {user_id}: {e}")
+            # Permanent errors (bad chat_id, invalid message format, etc.) - do not retry
+            logger.error(f"❌ Permanent error sending {message_key} to {user_id}: {type(e).__name__}: {e}")
             self.update_send_log(user_id, message_key, "ERROR")
             return False
 
@@ -263,12 +329,11 @@ class FollowUpScheduler:
             return False
         
         try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if not cell:
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if not row:
                 return False
             
-            row = cell.row
             last_activity_str = worksheet.cell(row, self.last_activity_col).value
             
             if not last_activity_str:
@@ -291,18 +356,16 @@ class FollowUpScheduler:
             return
         
         try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if not cell:
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if not row:
                 return
             
-            row = cell.row
             # Очищаем оба планировщика
             worksheet.update(values=[["", ""]], range_name=f'J{row}:K{row}')  # Main funnel
             worksheet.update(values=[["", ""]], range_name=f'P{row}:Q{row}')  # Consultation
             # Очищаем состояние формы и время завершения
-            worksheet.update_cell(row, self.consult_state_col, "")
-            worksheet.update_cell(row, self.form_completed_col, "")
+            worksheet.update(values=[["", ""]], range_name=f'S{row}:T{row}')
             
             # Снимаем флаг остановки воронки
             if user_id in self.user_stop_flags:
@@ -319,10 +382,9 @@ class FollowUpScheduler:
             return
         
         try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if cell:
-                row = cell.row
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if row:
                 timestamp = datetime.now(self.tz).strftime("%Y-%m-%d %H:%M:%S")
                 worksheet.update_cell(row, self.last_activity_col, timestamp)
         except Exception as e:
@@ -334,10 +396,9 @@ class FollowUpScheduler:
             return
         
         try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if cell:
-                row = cell.row
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if row:
                 timestamp = datetime.now(self.tz).strftime("%Y-%m-%d %H:%M:%S")
                 worksheet.update_cell(row, self.form_completed_col, timestamp)
         except Exception as e:
@@ -375,12 +436,10 @@ class FollowUpScheduler:
             return
         
         try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if cell:
-                row = cell.row
-                worksheet.update_cell(row, self.consult_scheduler_cols["next_msg"], next_msg)
-                worksheet.update_cell(row, self.consult_scheduler_cols["run_date"], run_date.strftime("%Y-%m-%d %H:%M:%S"))
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if row:
+                worksheet.update(values=[[next_msg, run_date.strftime("%Y-%m-%d %H:%M:%S")]], range_name=f'P{row}:Q{row}')
                 if chat_id is not None:
                     worksheet.update_cell(row, 12, str(chat_id))
                 logger.info(f"✅ Consultation schedule updated for {user_id}: {next_msg} at {run_date}")
@@ -393,10 +452,9 @@ class FollowUpScheduler:
             return
         
         try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if cell:
-                row = cell.row
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if row:
                 worksheet.update(values=[["", ""]], range_name=f'P{row}:Q{row}')
                 logger.info(f"✅ Cleared consultation schedule for {user_id}")
         except Exception as e:
@@ -528,17 +586,14 @@ class FollowUpScheduler:
             return
 
         try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if cell:
-                row = cell.row
-                # Предполагаем, что столбцы J (10) и K (11) свободны или предназначены для этого
-                # 10: Next Scheduled Message
-                # 11: Run Date
-                worksheet.update_cell(row, 10, next_msg)
-                worksheet.update_cell(row, 11, run_date.strftime("%Y-%m-%d %H:%M:%S"))
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if row:
+                # 10: Next Scheduled Message, 11: Run Date
                 if chat_id is not None:
-                    worksheet.update_cell(row, 12, str(chat_id))
+                    worksheet.update(values=[[next_msg, run_date.strftime("%Y-%m-%d %H:%M:%S"), str(chat_id)]], range_name=f'J{row}:L{row}')
+                else:
+                    worksheet.update(values=[[next_msg, run_date.strftime("%Y-%m-%d %H:%M:%S")]], range_name=f'J{row}:K{row}')
                 logger.info(f"✅ Google Sheets updated for {user_id}: {next_msg} at {run_date}")
         except Exception as e:
             logger.error(f"❌ Failed to update Google Sheets schedule for {user_id}: {e}")
@@ -547,27 +602,123 @@ class FollowUpScheduler:
         if not self.google_sheets:
             return
         try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if cell:
-                row = cell.row
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if row:
                 worksheet.update(values=[["", ""]], range_name=f'J{row}:K{row}')
         except Exception as e:
             logger.error(f"❌ Failed to clear sheet schedule for {user_id}: {e}")
 
-    def update_send_log(self, user_id, message_key, status):
+    def update_send_log(self, user_id, message_key, status, attempt_number=0):
+        """Updates send log in Google Sheets with retry support.
+        
+        Status formats:
+        - OK: Successfully sent
+        - RETRY_N: Retry attempt N pending
+        - FAILED_MAX_RETRIES: Exhausted all retries
+        - ERROR: Permanent error
+        """
         if not self.google_sheets:
             return
         try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if cell:
-                row = cell.row
-                worksheet.update_cell(row, 13, message_key)
-                worksheet.update_cell(row, 14, datetime.now(self.tz).strftime("%Y-%m-%d %H:%M:%S"))
-                worksheet.update_cell(row, 15, status)
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if row:
+                # Format status with attempt number if it's a retry
+                if status == "RETRY" and attempt_number > 0:
+                    status = f"RETRY_{attempt_number}"
+                
+                timestamp = datetime.now(self.tz).strftime("%Y-%m-%d %H:%M:%S")
+                worksheet.update(values=[[message_key, timestamp, status]], range_name=f'M{row}:O{row}')
         except Exception as e:
             logger.error(f"❌ Failed to update send log for {user_id}: {e}")
+
+    def get_retry_attempt(self, user_id):
+        """Reads the current retry attempt number from Google Sheets.
+        
+        Returns:
+            int: Current retry attempt number (0 if no retry in progress)
+        """
+        if not self.google_sheets:
+            return 0
+        
+        try:
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if row:
+                status = worksheet.cell(row, 15).value  # Column 15: Last Send Status
+                if status and status.startswith("RETRY_"):
+                    # Parse RETRY_N format
+                    try:
+                        return int(status.split("_")[1])
+                    except (IndexError, ValueError):
+                        logger.warning(f"Invalid retry status format: {status}")
+                        return 0
+            return 0
+        except Exception as e:
+            logger.error(f"❌ Failed to get retry attempt for {user_id}: {e}")
+            return 0
+
+    def schedule_retry(self, user_id, chat_id, message_key, attempt_number):
+        """Schedules a retry for a failed message with exponential backoff.
+        
+        Args:
+            user_id: User ID
+            chat_id: Chat ID
+            message_key: Message key to retry
+            attempt_number: Current attempt number (0-indexed)
+        
+        Returns:
+            bool: True if retry was scheduled, False if max retries exceeded
+        """
+        if attempt_number >= MAX_RETRY_ATTEMPTS:
+            logger.error(f"❌ Max retries ({MAX_RETRY_ATTEMPTS}) exceeded for {message_key} to {user_id}")
+            self.update_send_log(user_id, message_key, "FAILED_MAX_RETRIES")
+            return False
+        
+        # Get delay from configuration
+        delay_minutes = RETRY_DELAYS[attempt_number]
+        run_date = datetime.now(self.tz) + timedelta(minutes=delay_minutes)
+        job_id = f"retry_{attempt_number}_{message_key}_{user_id}"
+        
+        logger.warning(
+            f"⏰ Scheduling retry {attempt_number + 1}/{MAX_RETRY_ATTEMPTS} "
+            f"for {message_key} to {user_id} in {delay_minutes} minutes"
+        )
+        
+        # Update Google Sheets with retry status
+        self.update_send_log(user_id, message_key, "RETRY", attempt_number=attempt_number + 1)
+        
+        # Schedule the retry job
+        if self.use_sheet_queue:
+            # For sheet-based queue, we'll update the schedule
+            # The dispatch_due_messages_from_sheet will pick it up
+            self.update_sheet_schedule(user_id, message_key, run_date, chat_id=chat_id)
+        else:
+            # For local scheduler, add a job with retry context
+            self.scheduler.add_job(
+                self._retry_send_job,
+                trigger=DateTrigger(run_date=run_date),
+                args=[user_id, chat_id, message_key, attempt_number + 1],
+                id=job_id,
+                replace_existing=True
+            )
+        
+        return True
+
+    def _retry_send_job(self, user_id, chat_id, message_key, attempt_number):
+        """Internal method to handle retry attempts.
+        
+        This wraps send_message_job with retry-specific logic.
+        """
+        logger.info(f"🔄 Retry attempt {attempt_number}/{MAX_RETRY_ATTEMPTS} for {message_key} to {user_id}")
+        
+        # Try to send the message
+        success = self.send_message_job(user_id, chat_id, message_key, schedule_next=True)
+        
+        if not success:
+            # If still failing, schedule another retry
+            self.schedule_retry(user_id, chat_id, message_key, attempt_number)
 
     def get_next_plan(self, message_key):
         if message_key in FOLLOW_UP_PLAN:
@@ -580,7 +731,7 @@ class FollowUpScheduler:
             return
 
         try:
-            worksheet = self.google_sheets.worksheet("Users")
+            worksheet = self._get_users_worksheet()
             all_records = worksheet.get_all_records()
             now = datetime.now(self.tz)
 
@@ -709,10 +860,9 @@ class FollowUpScheduler:
             return
         
         try:
-            worksheet = self.google_sheets.worksheet("Users")
-            cell = worksheet.find(str(user_id), in_column=1)
-            if cell:
-                row = cell.row
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if row:
                 
                 # Проверяем, была ли форма вообще активна
                 consult_state = worksheet.cell(row, self.consult_state_col).value
