@@ -555,33 +555,113 @@ class FollowUpScheduler:
         if self.use_sheet_queue:
             self.clear_consultation_schedule(user_id)
 
-    def schedule_funnel_recovery(self, user_id, chat_id):
-        """Планирует отправку Message 0 через 10 минут для лидов из диплинка."""
-        run_date = datetime.now(self.tz) + timedelta(minutes=10)
+    def schedule_funnel_recovery(self, user_id, chat_id, delay_minutes=10):
+        """Планирует ПРОВЕРКУ и восстановление воронки (message_0)."""
+        run_date = datetime.now(self.tz) + timedelta(minutes=delay_minutes)
         job_id = f"funnel_recovery_{user_id}"
         
         self.cancel_funnel_recovery(user_id)
         
-        logger.info(f"Планирую восстановление воронки для {user_id} через 10 мин")
+        logger.info(f"Планирую проверку восстановления воронки для {user_id} через {delay_minutes} мин")
         
-        if self.recovery_callback:
-            # Если есть коллбэк (из main.py), планируем вызов коллбэка
-            self.scheduler.add_job(
-                self.recovery_callback,
-                trigger=DateTrigger(run_date=run_date),
-                args=[user_id, chat_id],
-                id=job_id,
-                replace_existing=True
-            )
-        else:
-            # Иначе просто отправляем сообщение (старый способ)
-            self.scheduler.add_job(
-                self.send_message_job,
-                trigger=DateTrigger(run_date=run_date),
-                args=[user_id, chat_id, "message_0", True], 
-                id=job_id,
-                replace_existing=True
-            )
+        self.scheduler.add_job(
+            self.check_and_recover_funnel,
+            trigger=DateTrigger(run_date=run_date),
+            args=[user_id, chat_id], 
+            id=job_id,
+            replace_existing=True
+        )
+
+    def check_and_recover_funnel(self, user_id, chat_id):
+        """Проверяет условия и отправляет message_0 если воронка пуста."""
+        logger.info(f"🔍 Проверка восстановления воронки для {user_id}")
+        
+        if self.is_stopped(user_id):
+            logger.info(f"Воронка остановлена для {user_id}, восстановление отменено.")
+            return
+
+        if not self.google_sheets:
+            return
+
+        try:
+            worksheet = self._get_users_worksheet()
+            row = self._find_user_row(worksheet, user_id)
+            if not row:
+                return
+
+            # 1. Проверяем запланированные сообщения (основная воронка)
+            # Col J (10), K (11)
+            next_msg = worksheet.cell(row, self.main_scheduler_cols["next_msg"]).value
+            run_date_str = worksheet.cell(row, self.main_scheduler_cols["run_date"]).value
+            
+            # Если есть запланированное сообщение и дата корректна/в будущем (или просто есть план)
+            # Мы считаем воронку активной.
+            # (Даже если дата в прошлом — диспетчер должен был отправить. Если не отправил, значит воронка "застряла", но она ЕСТЬ)
+            if next_msg and str(next_msg).strip() and str(next_msg).startswith("message_"):
+                 logger.info(f"✅ У {user_id} уже запланировано {next_msg}, восстановление не требуется.")
+                 return
+
+            # 2. Если ничего не запланировано — проверяем историю
+            # Col M (13) Last Sent Message, N (14) Last Sent At
+            # Col T (20) Form Completed At
+            
+            last_msg = worksheet.cell(row, 13).value
+            last_sent_at_str = worksheet.cell(row, 14).value
+            form_completed_at_str = worksheet.cell(row, self.form_completed_col).value
+            
+            now = datetime.now(self.tz)
+            should_start = False
+            reason = ""
+            
+            # А. История пуста (новичок, или диплинк который ничего не получал)
+            if not last_msg or not str(last_msg).strip():
+                should_start = True
+                reason = "No history"
+            
+            else:
+                # Б. История есть. Проверяем 3 дня.
+                # Парсим Last Sent At
+                time_since_msg = timedelta(days=0)
+                if last_sent_at_str:
+                    try:
+                        last_date = datetime.strptime(last_sent_at_str, "%Y-%m-%d %H:%M:%S")
+                        last_date = self.tz.localize(last_date)
+                        time_since_msg = now - last_date
+                    except ValueError:
+                        pass
+                
+                # Парсим Form Completed At
+                time_since_form = timedelta(days=0)
+                form_exists = False
+                if form_completed_at_str:
+                    try:
+                        form_date = datetime.strptime(form_completed_at_str, "%Y-%m-%d %H:%M:%S")
+                        form_date = self.tz.localize(form_date)
+                        time_since_form = now - form_date
+                        form_exists = True
+                    except ValueError:
+                        pass
+
+                # Логика сброса:
+                # 1. Прошло 3 дня с message_7
+                if last_msg == "message_7" and time_since_msg.total_seconds() > 3 * 24 * 3600:
+                    should_start = True
+                    reason = "> 3 days since message_7"
+                
+                # 2. Прошло 3 дня с заполнения формы
+                elif form_exists and time_since_form.total_seconds() > 3 * 24 * 3600:
+                    should_start = True
+                    reason = "> 3 days since form completed"
+
+            if should_start:
+                 logger.info(f"🚀 Восстанавливаем воронку для {user_id} (message_0). Причина: {reason}")
+                 # Отправляем message_0
+                 self.send_message_job(user_id, chat_id, "message_0", schedule_next=True)
+            else:
+                 logger.info(f"💤 Восстановление для {user_id} не требуется (критерии не выполнены). Last: {last_msg}")
+                 
+        except Exception as e:
+            logger.error(f"❌ Ошибка при проверке восстановления для {user_id}: {e}")
 
     def cancel_funnel_recovery(self, user_id):
         """Отменяет задачу восстановления воронки."""
@@ -901,5 +981,19 @@ class FollowUpScheduler:
                     self.user_data[user_id] = {}
                     if entry_source:
                         self.user_data[user_id]["entry_source"] = entry_source
+                        
+                # 3. После закрытия формы -- пробуем восстановить воронку (умная проверка)
+                # Если у пользователя ничего нет -- отправим message_0
+                # Если есть -- ничего не сделаем
+                # Передаем chat_id если возможно (из кэша или None, тогда функция должна найти или упасть аккуратно)
+                # Попробуем найти chat_id в строке
+                chat_id_val = worksheet.cell(row, 12).value
+                if chat_id_val:
+                    try:
+                        # Запускаем проверку через 1 минуту, чтобы дать время текущим процессам (если есть) завершиться
+                        self.schedule_funnel_recovery(user_id, int(chat_id_val), delay_minutes=1)
+                    except ValueError:
+                        pass
+
         except Exception as e:
             logger.error(f"❌ Ошибка закрытия формы для {user_id}: {e}")
