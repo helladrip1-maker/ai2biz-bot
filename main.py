@@ -168,7 +168,7 @@ welcome_message_ids = {}
 form_answers = {}  # Для формы диагностики
 
 # Инициализация scheduler для дожимов (ПОСЛЕ определения user_data)
-scheduler = FollowUpScheduler(bot, user_data, google_sheets)
+scheduler = FollowUpScheduler(bot, user_data, user_state, google_sheets)
 scheduler.start()
 logger.info("✅ Scheduler для дожимов запущен")
 

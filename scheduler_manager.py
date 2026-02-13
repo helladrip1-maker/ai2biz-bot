@@ -41,9 +41,10 @@ except ImportError:
 RETRY_SAFE_ERRORS = tuple(_retry_errors)
 
 class FollowUpScheduler:
-    def __init__(self, bot, user_data, google_sheets=None, scheduler_storage=None):
+    def __init__(self, bot, user_data, user_state, google_sheets=None, scheduler_storage=None):
         self.bot = bot
         self.user_data = user_data
+        self.user_state = user_state
         self.google_sheets = google_sheets
         self.scheduler = BackgroundScheduler()
         # Если нужно, можно добавить RedisJobStore или SQLAlchemyJobStore
@@ -163,6 +164,23 @@ class FollowUpScheduler:
 
     def send_message_job(self, user_id, chat_id, message_key, schedule_next=True):
         """Задача отправки сообщения."""
+        # Проверяем, находится ли пользователь в процессе консультации
+        if message_key.startswith("message_") and "followup" not in message_key and message_key != "message_file_menu":
+            current_state = self.user_state.get(user_id, "")
+            # Если пользователь в состоянии консультации (любой этап)
+            if current_state and current_state.startswith("consultation"):
+                logger.info(f"⛔️ Прерываю консультацию для {user_id} из-за сообщения {message_key}")
+                self.user_state.pop(user_id, None) # Сбрасываем состояние
+                self.cancel_consultation_followups(user_id) # Отменяем дожимы консультации
+                self.close_consultation_form(user_id) # Закрываем форму в таблице
+                
+                # Удаляем Reply клавиатуру (отправляем невидимое сообщение и удаляем его)
+                try:
+                    rm_msg = self.bot.send_message(chat_id, "...", reply_markup=telebot.types.ReplyKeyboardRemove())
+                    self.bot.delete_message(chat_id, rm_msg.message_id)
+                except Exception:
+                    pass
+
         try:
             logger.info(f"Отправка воронки {message_key} для {user_id}")
             msg_data = MESSAGES.get(message_key)
@@ -871,8 +889,11 @@ class FollowUpScheduler:
                 # Очищаем состояние формы
                 worksheet.update_cell(row, self.consult_state_col, "")
                 logger.info(f"✅ Форма консультации закрыта для {user_id} (была активна: {form_was_active})")
-                # Reply-клавиатура автоматически исчезнет при следующем сообщении без клавиатуры
                 
+                # Очищаем user_state в памяти
+                if self.user_state and user_id in self.user_state:
+                    self.user_state.pop(user_id, None)
+
                 # Очищаем данные формы в памяти
                 if user_id in self.user_data:
                     # Сохраняем entry_source если есть
